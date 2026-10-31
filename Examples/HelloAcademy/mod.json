@@ -1,0 +1,9 @@
+{
+  // Folder name doesn't matter; the id must be unique (letters, digits, _). It prefixes your saved data keys.
+  "id": "hello_academy",
+  "name": "Hello Academy (example)",
+  "version": "1.0.0",
+  "author": "ModKit",
+  "description": "Example mod: a button in the Academy that walks you to the Headmaster, a greeting when you enter a level, and a small Harmony patch.",
+  "minModKitVersion": "1.0.0"
+}

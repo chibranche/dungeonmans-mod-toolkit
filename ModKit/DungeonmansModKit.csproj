@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>DungeonmansModKit</AssemblyName>
+    <RootNamespace>DungeonmansModKit</RootNamespace>
+    <Version>1.0.0</Version>
+    <GameDir Condition="'$(GameDir)' == ''">E:\SteamLibrary\steamapps\common\Dungeonmans</GameDir>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>CS1591;CA1416</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Lib.Harmony" Version="2.3.6" />
+    <Reference Include="Dungeonmans">
+      <HintPath>$(GameDir)\Dungeonmans.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="MonoGame.Framework">
+      <HintPath>$(GameDir)\MonoGame.Framework.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <!-- The game ships the Roslyn C# compiler (for its own .cs mods); we reuse it for ModKit .cs mods. -->
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>$(GameDir)\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>$(GameDir)\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>
