@@ -97,6 +97,8 @@ public sealed class ModToggle
 	public string Label { get; internal set; }
 	public string Description { get; internal set; }
 	public bool Default { get; internal set; }
+	/// <summary>Heading this switch is listed under in Mod Settings (optional).</summary>
+	public string Group { get; internal set; }
 }
 
 /// <summary>
@@ -109,7 +111,7 @@ public sealed class ModSettings
 {
 	private readonly ModContext ctx;
 	private readonly List<ModToggle> toggles = new List<ModToggle>();
-	private Dictionary<string, bool> values;
+	private Dictionary<string, object> values;
 
 	internal ModSettings(ModContext ctx) => this.ctx = ctx;
 
@@ -117,17 +119,16 @@ public sealed class ModSettings
 
 	private string ConfigPath => ctx.PathFor("config.json");
 
-	public ModToggle AddToggle(string key, string label, string description = "", bool defaultOn = true)
+	public ModToggle AddToggle(string key, string label, string description = "", bool defaultOn = true, string group = null)
 	{
-		var t = new ModToggle { Key = key, Label = label, Description = description, Default = defaultOn };
+		var t = new ModToggle { Key = key, Label = label, Description = description, Default = defaultOn, Group = group };
 		toggles.Add(t);
 		return t;
 	}
 
 	public bool On(string key)
 	{
-		Dictionary<string, bool> v = values ??= Load();
-		if (v.TryGetValue(key, out bool on))
+		if (Values.TryGetValue(key, out object v) && v is bool on)
 		{
 			return on;
 		}
@@ -136,26 +137,51 @@ public sealed class ModSettings
 
 	public void Set(string key, bool on)
 	{
-		(values ??= Load())[key] = on;
+		Values[key] = on;
 		Save();
 	}
 
 	public void Toggle(string key) => Set(key, !On(key));
 
-	private Dictionary<string, bool> Load()
+	/// <summary>A whole-number setting (e.g. a window position), saved with the switches.</summary>
+	public int GetInt(string key, int fallback = 0) => Values.TryGetValue(key, out object v) && v is int i ? i : fallback;
+
+	public void SetInt(string key, int value)
 	{
+		Values[key] = value;
+		Save();
+	}
+
+	private Dictionary<string, object> Values => values ??= Load();
+
+	private Dictionary<string, object> Load()
+	{
+		var result = new Dictionary<string, object>();
 		try
 		{
 			if (File.Exists(ConfigPath))
 			{
-				return JsonSerializer.Deserialize<Dictionary<string, bool>>(File.ReadAllText(ConfigPath)) ?? new Dictionary<string, bool>();
+				var raw = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(File.ReadAllText(ConfigPath));
+				foreach (var kv in raw ?? new Dictionary<string, JsonElement>())
+				{
+					switch (kv.Value.ValueKind)
+					{
+					case JsonValueKind.True:
+					case JsonValueKind.False:
+						result[kv.Key] = kv.Value.GetBoolean();
+						break;
+					case JsonValueKind.Number when kv.Value.TryGetInt32(out int n):
+						result[kv.Key] = n;
+						break;
+					}
+				}
 			}
 		}
 		catch (Exception e)
 		{
 			ctx.Log.Write("Could not read " + ConfigPath + ": " + e.Message);
 		}
-		return new Dictionary<string, bool>();
+		return result;
 	}
 
 	private void Save()

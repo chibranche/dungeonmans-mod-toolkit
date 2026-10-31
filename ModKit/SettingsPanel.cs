@@ -6,18 +6,29 @@ using Microsoft.Xna.Framework;
 
 namespace DungeonmansModKit;
 
-// "Mod Settings": every mod in the Mods folder, each with an enable switch (applies at next launch) and its own
-// switches (apply immediately). Opened from a button on the title screen and under the Options window.
+// "Mod Settings": one card per mod (whole-mod switch, applies at next launch), then its switches grouped under
+// headings (apply immediately). Descriptions are tooltips. Opened from the title screen and under the Options window.
 internal static class SettingsPanel
 {
 	public static bool IsOpen;
 	private static int selected;
-	private static int scroll;
+	private static int scroll; // in pixels
+
+	private enum Kind
+	{
+		Mod,
+		Group,
+		Toggle,
+	}
 
 	private sealed class Row
 	{
+		public Kind Kind;
 		public LoadedMod Mod;
-		public ModToggle Toggle; // null = the mod's header row
+		public ModToggle Toggle;
+		public string Group;
+		public int Height => Kind == Kind.Mod ? 52 : Kind == Kind.Group ? 34 : 32;
+		public bool Selectable => Kind != Kind.Group;
 	}
 
 	private static List<Row> rows = new List<Row>();
@@ -27,15 +38,24 @@ internal static class SettingsPanel
 		rows = new List<Row>();
 		foreach (LoadedMod m in Loader.Mods)
 		{
-			rows.Add(new Row { Mod = m });
-			if (m.Context != null && m.State == "loaded")
+			rows.Add(new Row { Kind = Kind.Mod, Mod = m });
+			if (m.Context == null || m.State != "loaded")
 			{
-				rows.AddRange(m.Context.Settings.Toggles.Select(t => new Row { Mod = m, Toggle = t }));
+				continue;
+			}
+			string group = null;
+			foreach (ModToggle t in m.Context.Settings.Toggles)
+			{
+				if (t.Group != null && t.Group != group)
+				{
+					group = t.Group;
+					rows.Add(new Row { Kind = Kind.Group, Mod = m, Group = group });
+				}
+				rows.Add(new Row { Kind = Kind.Toggle, Mod = m, Toggle = t });
 			}
 		}
+		selected = rows.FindIndex(r => r.Selectable);
 	}
-
-	private static dmGame Game => dmUtilities.theGame;
 
 	// ---------- input ----------
 
@@ -49,19 +69,19 @@ internal static class SettingsPanel
 		}
 		else if (a.Contains(ActionButton.Up) || a.Contains(ActionButton.ArrowKey_Up))
 		{
-			Select(selected - 1);
+			Step(-1);
 		}
 		else if (a.Contains(ActionButton.Down) || a.Contains(ActionButton.ArrowKey_Down))
 		{
-			Select(selected + 1);
+			Step(1);
 		}
 		else if (a.Contains(ActionButton.MouseWheel_Up))
 		{
-			scroll = Math.Max(0, scroll - 3);
+			scroll -= 96;
 		}
 		else if (a.Contains(ActionButton.MouseWheel_Down))
 		{
-			scroll = Math.Max(0, Math.Min(rows.Count - visibleRows, scroll + 3));
+			scroll += 96;
 		}
 		else if (a.Contains(ActionButton.Enter) || a.Contains(ActionButton.Select)
 			|| a.Contains(ActionButton.Left) || a.Contains(ActionButton.Right))
@@ -71,48 +91,47 @@ internal static class SettingsPanel
 		a.Clear();
 	}
 
-	private static void Select(int i)
+	private static void Step(int dir)
 	{
-		if (rows.Count == 0)
+		int i = selected;
+		do
 		{
-			return;
+			i += dir;
 		}
-		selected = Math.Clamp(i, 0, rows.Count - 1);
-		if (selected < scroll)
+		while (i >= 0 && i < rows.Count && !rows[i].Selectable);
+		if (i >= 0 && i < rows.Count)
 		{
-			scroll = selected;
-		}
-		else if (selected >= scroll + visibleRows)
-		{
-			scroll = selected - visibleRows + 1;
+			selected = i;
+			keepVisible = true;
 		}
 	}
 
-	private static void Open()
+	private static bool keepVisible;
+
+	public static void Open()
 	{
 		Rebuild();
 		IsOpen = true;
-		selected = 0;
 		scroll = 0;
 		dmAudio.PlayUIFX("open_dialog");
 	}
 
-	private static void Close()
+	public static void Close()
 	{
 		IsOpen = false;
 		dmAudio.PlayUIFX("ui_back_02");
 	}
 
-	private static bool IsOn(Row r) => r.Toggle == null ? r.Mod.Enabled : r.Mod.Context.Settings.On(r.Toggle.Key);
+	private static bool IsOn(Row r) => r.Kind == Kind.Mod ? r.Mod.Enabled : r.Mod.Context.Settings.On(r.Toggle.Key);
 
 	private static void Toggle(int i)
 	{
-		if (i < 0 || i >= rows.Count)
+		if (i < 0 || i >= rows.Count || !rows[i].Selectable)
 		{
 			return;
 		}
 		Row r = rows[i];
-		if (r.Toggle == null)
+		if (r.Kind == Kind.Mod)
 		{
 			Loader.SetEnabled(r.Mod.Info.Id, !r.Mod.Enabled);
 		}
@@ -135,12 +154,12 @@ internal static class SettingsPanel
 			// Just under the vanilla options parchment (same size formula as Dialog_Options_2021).
 			int count = (g.bShowMainMenu ? 5 : 6) + tr.optionsList.Count;
 			int heightUnits = (count * 40 + 32) / 2 / 32 + 4;
-			r = new Rectangle((int)(tr.fWindowXSize * 0.5f) - 128, 32 + heightUnits * 32 + 8, 256, 32);
+			r = new Rectangle((int)(tr.fWindowXSize * 0.5f) - 120, 32 + heightUnits * 32 + 8, 240, 40);
 			return true;
 		}
 		if (g.bShowMainMenu && g.mainMenu != null && g.mainMenu.eMainMenuState == dmMainMenuInterface.MainMenuState.MMS_MainTitle && !g.bDialogBoxMode)
 		{
-			r = new Rectangle(16, (int)tr.fWindowYSize - 56, 256, 32);
+			r = new Rectangle(16, (int)tr.fWindowYSize - 60, 240, 40);
 			return true;
 		}
 		return false;
@@ -158,10 +177,7 @@ internal static class SettingsPanel
 			{
 				wg2DRenderer tr = g.theRenderer;
 				tr.BeginSpriteBatch();
-				tr.bForceDropShadows = true;
-				tr.DrawParchmentBox(r.X, r.Y, r.Width / 32, 1);
-				ui_mouseFrame f = Ui.Area("modkit_settings_button", r, Open, 30);
-				Ui.Text("Mod Settings", r.X + 74, r.Y + 6, Ui.Hovered(f) ? ShepColor.Yellow : Color.White);
+				Ui.BoxButton("modkit_settings_button", r, "Mod Settings", Open, font: UiFont.Medium, stackLevel: 30);
 				tr.EndSpriteBatch();
 			}
 		}
@@ -172,116 +188,155 @@ internal static class SettingsPanel
 		}
 	}
 
-	private const int PanelUnitsW = 24, RowH = 34;
-	private static int visibleRows = 12;
-
-	private static string StateNote(LoadedMod m)
+	private static (string text, Color color) State(LoadedMod m)
 	{
 		bool loadedNow = m.State != "disabled";
 		if (m.Enabled != loadedNow)
 		{
-			return "^3(restart the game to apply)^7";
+			return ("restart to apply", Palette.Warn);
 		}
 		switch (m.State)
 		{
 			case "failed":
-				return "^1(failed to load)^7";
+				return ("failed to load", Palette.Bad);
 			case "no code":
-				return "(data only)";
-			case "loaded":
-				int failed = m.Context.Patches.Count(p => !p.Ok);
-				return failed > 0 ? "^1(" + failed + " part" + (failed > 1 ? "s" : "") + " failed)^7" : "";
+				return ("data only", Palette.TextDim);
+			case "disabled":
+				return ("off", Palette.TextMuted);
 			default:
-				return "";
+				int failed = m.Context.Patches.Count(p => !p.Ok);
+				return failed > 0 ? (failed + " part" + (failed > 1 ? "s" : "") + " broken", Palette.Bad) : ("running", Palette.Good);
 		}
 	}
 
-	private static string Help(Row r)
+	private static string ModHelp(LoadedMod m)
 	{
-		if (r.Toggle != null)
-		{
-			return r.Toggle.Description;
-		}
-		LoadedMod m = r.Mod;
-		string s = (string.IsNullOrEmpty(m.Info.Description) ? "" : m.Info.Description + " ")
-			+ (string.IsNullOrEmpty(m.Info.Author) ? "" : "By " + m.Info.Author + ". ")
-			+ "Switching a whole mod on/off applies at the next launch.";
+		string s = (m.Info.Description ?? "") + (string.IsNullOrEmpty(m.Info.Author) ? "" : "\n^7By " + m.Info.Author);
 		if (m.Error != null)
 		{
 			string err = m.Error.Split('\n')[0].Trim();
-			s += " ^1" + (err.Length > 160 ? err.Substring(0, 157) + "..." : err) + "^7 See ModKit\\modkit.log.";
+			s += "\n^1" + (err.Length > 90 ? err.Substring(0, 87) + "..." : err) + "^7";
 		}
 		else if (m.Context?.Patches.Any(p => !p.Ok) == true)
 		{
-			s += " ^1Not working (game update?): " + string.Join(", ", m.Context.Patches.Where(p => !p.Ok).Select(p => p.Name)) + "^7";
+			s += "\n^1Broken: " + string.Join(", ", m.Context.Patches.Where(p => !p.Ok).Select(p => p.Name)) + "^7";
 		}
-		return s;
+		return s + "\n^7Whole-mod switch: applies at next launch.";
 	}
+
+	private const int WidthUnits = 22;
 
 	private static void DrawPanel(dmGame g)
 	{
 		wg2DRenderer tr = g.theRenderer;
-		int w = PanelUnitsW * 32;
-		visibleRows = Math.Max(4, ((int)tr.fWindowYSize - 64 - 64 - 150) / RowH);
-		int shown = Math.Min(visibleRows, rows.Count);
-		int heightUnits = (64 + shown * RowH + 120) / 32;
-		int x = (int)(tr.fWindowXSize * 0.5f) - w / 2;
-		int y = Math.Max(8, (int)(tr.fWindowYSize * 0.5f) - (heightUnits * 32 + 32) / 2);
+		int total = rows.Sum(r => r.Height);
+		int maxListH = (int)tr.fWindowYSize - 260;
+		int listH = Math.Min(total, maxListH);
+		int heightUnits = (listH + 130) / 32 + 1;
 
 		tr.BeginSpriteBatch();
 		tr.bForceDropShadows = true;
-		Ui.DimAndBlock("modkit_settings", 30);
-		tr.DrawParchmentBox(x, y, PanelUnitsW, heightUnits);
-		Ui.Text("Mod Settings", x + 24, y + 12, ShepColor.Yellow, UiFont.Large);
-		Ui.Text("Click (or Enter) to switch on/off. Saved immediately.", x + 250, y + 22, Color.LightGray);
-		ui_mouseFrame close = Ui.Area("modkit_settings_close", new Rectangle(x + w - 44, y + 8, 36, 32), Close, 31);
-		Ui.Text("X", x + w - 34, y + 10, Ui.Hovered(close) ? ShepColor.Yellow : Color.White, UiFont.Medium);
+		Rectangle c = Ui.ModalWindow("modkit_settings", WidthUnits, heightUnits, "Mod Settings", Close, "changes save instantly");
+		var list = new Rectangle(c.X, c.Y, c.Width, c.Height - 36);
 
-		int rowY = y + 64;
 		if (rows.Count == 0)
 		{
-			Ui.Text("No mods found. Put mods in the game's Mods folder.", x + 28, rowY + 6, Color.LightGray, UiFont.Medium);
+			Ui.TextCentered("No mods in the Mods folder yet.", list, Palette.TextDim, UiFont.Medium);
 		}
-		scroll = Math.Max(0, Math.Min(scroll, rows.Count - shown));
-		for (int vi = 0; vi < shown; vi++)
+		scroll = Math.Max(0, Math.Min(scroll, Math.Max(0, total - list.Height)));
+		if (keepVisible && selected >= 0)
 		{
-			int i = scroll + vi;
-			Row r = rows[i];
-			int ry = rowY + vi * RowH;
-			int idx = i;
-			ui_mouseFrame rf = Ui.Area("modkit_settings_row_" + vi, new Rectangle(x + 16, ry, w - 32, RowH - 4), () => Toggle(idx), 31);
-			if (Ui.Hovered(rf))
+			keepVisible = false;
+			int top = rows.Take(selected).Sum(r => r.Height);
+			if (top < scroll)
 			{
-				selected = i;
+				scroll = top;
 			}
-			bool on = IsOn(r);
-			Color label = i == selected ? ShepColor.Yellow : on ? Color.White : Color.Gray;
-			if (r.Toggle == null)
+			else if (top + rows[selected].Height > scroll + list.Height)
 			{
-				Ui.Text(on ? "[ON]" : "[off]", x + 28, ry + 4, on ? ShepColor.Cyan : Color.DarkGray, UiFont.Medium);
-				Ui.Text(r.Mod.Info.Name + "  ^7v" + r.Mod.Info.Version + "  " + StateNote(r.Mod), x + 100, ry + 2, label, UiFont.Medium);
+				scroll = top + rows[selected].Height - list.Height;
 			}
-			else
-			{
-				Ui.Text(on ? "[ON]" : "[off]", x + 64, ry + 6, on ? ShepColor.Cyan : Color.DarkGray);
-				Ui.Text(r.Toggle.Label, x + 124, ry + 6, label);
-			}
-		}
-		if (scroll > 0)
-		{
-			Ui.Button("modkit_settings_up", x + w - 140, y + 36, "more above", () => scroll = Math.Max(0, scroll - shown), stackLevel: 31);
-		}
-		if (scroll + shown < rows.Count)
-		{
-			Ui.Button("modkit_settings_down", x + w - 140, rowY + shown * RowH - 4, "more below", () => scroll = Math.Min(rows.Count - shown, scroll + shown), stackLevel: 31);
 		}
 
-		int helpY = rowY + shown * RowH + 20;
-		tr.DrawLine(x + 16, helpY - 6, x + w - 16, helpY - 6, 1, Color.Gray);
-		if (selected < rows.Count)
+		int y = list.Y - scroll;
+		for (int i = 0; i < rows.Count; i++)
 		{
-			Ui.WrappedText("^3?^7 " + Help(rows[selected]), x + 24, helpY + 4, w - 48);
+			Row r = rows[i];
+			int h = r.Height;
+			if (y + h > list.Y && y < list.Bottom - 2 && y >= list.Y - 2)
+			{
+				DrawRow(r, i, new Rectangle(list.X, y, list.Width - 14, h - 4));
+			}
+			y += h;
 		}
+
+		// Scrollbar
+		if (total > list.Height)
+		{
+			var track = new Rectangle(list.Right - 8, list.Y, 6, list.Height);
+			Ui.Fill(track, Palette.BarBack);
+			int thumbH = Math.Max(24, list.Height * list.Height / total);
+			int thumbY = track.Y + (int)((track.Height - thumbH) * (scroll / (float)Math.Max(1, total - list.Height)));
+			Ui.Fill(new Rectangle(track.X, thumbY, track.Width, thumbH), Palette.Border);
+		}
+
+		// Footer: keyboard hint
+		Ui.Separator(c.X, c.Bottom - 30, c.Width);
+		Ui.Text("Hover for details   ^3Up/Down^7 select   ^3Enter^7 switch   ^3Esc^7 close", c.X + 4, c.Bottom - 24, Palette.TextDim);
 		tr.EndSpriteBatch();
+	}
+
+	private static void DrawRow(Row r, int i, Rectangle rect)
+	{
+		int idx = i;
+		bool sel = i == selected;
+		switch (r.Kind)
+		{
+		case Kind.Mod:
+		{
+			ui_mouseFrame f = Ui.Area("modkit_settings_row_" + i, rect, () => Toggle(idx), 31);
+			bool hot = Ui.Hovered(f);
+			if (hot)
+			{
+				selected = i;
+				Ui.Tooltip(ModHelp(r.Mod));
+			}
+			Ui.Panel(rect, sel || hot ? Palette.PanelHover : Palette.PanelRaised, sel || hot ? Palette.BorderBright : Palette.Border);
+			Ui.Fill(new Rectangle(rect.X, rect.Y, 4, rect.Height), Palette.Accent);
+			Ui.Text(r.Mod.Info.Name, rect.X + 16, rect.Y + 10, Palette.Accent, UiFont.Medium);
+			int x = rect.X + 24 + (int)Ui.Measure(r.Mod.Info.Name, UiFont.Medium).X;
+			x = Ui.Chip(x, rect.Y + 13, "v" + r.Mod.Info.Version, Palette.TextDim);
+			(string text, Color color) = State(r.Mod);
+			Ui.Chip(x, rect.Y + 13, text, color);
+			Ui.Switch("modkit_settings_sw_" + i, new Rectangle(rect.Right - 66, rect.Y + 13, 52, 24), r.Mod.Enabled, () => Toggle(idx), stackLevel: 32);
+			break;
+		}
+		case Kind.Group:
+			Ui.Text(r.Group.ToUpperInvariant(), rect.X + 6, rect.Y + 10, Palette.Accent);
+			int tw = (int)Ui.Measure(r.Group.ToUpperInvariant()).X;
+			Ui.Fill(new Rectangle(rect.X + tw + 16, rect.Y + 21, rect.Width - tw - 22, 1), Palette.Border);
+			break;
+		default:
+		{
+			ui_mouseFrame f = Ui.Area("modkit_settings_row_" + i, rect, () => Toggle(idx), 31);
+			bool hot = Ui.Hovered(f);
+			bool on = IsOn(r);
+			if (hot)
+			{
+				selected = i;
+				if (!string.IsNullOrEmpty(r.Toggle.Description))
+				{
+					Ui.Tooltip(r.Toggle.Description);
+				}
+			}
+			if (sel || hot)
+			{
+				Ui.Fill(rect, Palette.PanelHover);
+			}
+			Ui.Switch("modkit_settings_sw_" + i, new Rectangle(rect.X + 14, rect.Y + 4, 44, 20), on, () => Toggle(idx), stackLevel: 32);
+			Ui.Text(r.Toggle.Label, rect.X + 72, rect.Y + 4, on ? Palette.Text : Palette.TextMuted);
+			break;
+		}
+		}
 	}
 }

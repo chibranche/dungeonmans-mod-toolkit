@@ -92,7 +92,7 @@ public enum UiFont
 /// <see cref="Events.DrawOverlay"/>, between renderer.BeginSpriteBatch() and EndSpriteBatch(). Clickable areas
 /// you stop drawing disappear on their own the next frame. Use ids prefixed with your mod id ("mymod_ok").
 /// </summary>
-public static class Ui
+public static partial class Ui
 {
 	/// <summary>Incremented once per drawn frame.</summary>
 	public static int Frame { get; internal set; }
@@ -154,17 +154,47 @@ public static class Ui
 	}
 
 	/// <summary>A clickable (or hover-only, if onClick is null) area. Returns the game's frame; use <see cref="Hovered"/>.</summary>
-	public static ui_mouseFrame Area(string id, Rectangle r, Action onClick, int stackLevel = WindowLevel)
+	public static ui_mouseFrame Area(string id, Rectangle r, Action onClick, int stackLevel = WindowLevel) => Area(id, r, onClick, null, stackLevel);
+
+	/// <summary>A clickable area with a right-click action too.</summary>
+	public static ui_mouseFrame Area(string id, Rectangle r, Action onClick, Action onRightClick, int stackLevel = WindowLevel)
 	{
 		ui_mouseFrame f = Dm.Game.theUIFrames.AddFrame(r.X, r.Y, r.Width, r.Height, stackLevel, id);
 		lastDrawn[id] = Frame;
 		f.RemoveIfFalse = StillDrawn;
+		f.funcOnClick = null;
+		f.funcOnRightClick = null;
+		clicks.Remove(id);
+		rightClicks.Remove(id);
 		if (onClick != null)
 		{
 			clicks[id] = onClick;
 			f.funcOnClick = Route;
 		}
+		if (onRightClick != null)
+		{
+			rightClicks[id] = onRightClick;
+			f.funcOnRightClick = RouteRight;
+		}
 		return f;
+	}
+
+	private static readonly Dictionary<string, Action> rightClicks = new Dictionary<string, Action>();
+
+	private static object RouteRight(ui_mouseFrame f, int button)
+	{
+		if (rightClicks.TryGetValue(f.strFrameID, out Action a))
+		{
+			try
+			{
+				a();
+			}
+			catch (Exception e)
+			{
+				KitLog.Write("Right-click on " + f.strFrameID + " threw: " + e);
+			}
+		}
+		return true;
 	}
 
 	/// <summary>Is the mouse over this frame (and it's the top frame under the mouse)?</summary>

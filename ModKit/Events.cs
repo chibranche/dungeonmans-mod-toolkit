@@ -187,8 +187,11 @@ internal static class CoreHooks
 			return;
 		}
 		Ui.Frame++;
+		Ui.BeginFrame();
 		Events.OnDrawOverlay(g);
 		SettingsPanel.Draw(g);
+		Ui.FlushToasts();
+		Ui.FlushTooltip();
 	}
 
 	private static bool GameInputPrefix(dmGame __instance)
