@@ -9,28 +9,41 @@ using Microsoft.Xna.Framework.Input;
 
 namespace DungeonmansModKit;
 
-/// <summary>Colors that read well on the game's dark UI. Use them so mods look consistent.</summary>
+/// <summary>Text colors that read well on the game's boxes. Use them so mods look consistent.</summary>
 public static class Palette
 {
+	public static readonly Color Text = new Color(236, 228, 210);
+	public static readonly Color TextDim = new Color(186, 172, 148);
+	public static readonly Color TextMuted = new Color(128, 116, 100);
+	public static readonly Color Accent = new Color(250, 206, 92);
+	public static readonly Color Good = new Color(120, 210, 110);
+	public static readonly Color Warn = new Color(236, 170, 70);
+	public static readonly Color Bad = new Color(232, 92, 78);
+	public static readonly Color Info = new Color(110, 196, 240);
+	public static readonly Color Border = new Color(112, 88, 60);
+	public static readonly Color BorderBright = new Color(214, 176, 92);
+
+	// Kept for flat drawing (small details like map cells).
 	public static readonly Color Panel = new Color(24, 18, 14, 215);
 	public static readonly Color PanelRaised = new Color(44, 34, 26, 235);
 	public static readonly Color PanelHover = new Color(70, 54, 36, 240);
 	public static readonly Color PanelSelected = new Color(92, 70, 30, 245);
-	public static readonly Color Border = new Color(112, 88, 60);
-	public static readonly Color BorderBright = new Color(214, 176, 92);
-	public static readonly Color Text = new Color(236, 228, 210);
-	public static readonly Color TextDim = new Color(176, 164, 142);
-	public static readonly Color TextMuted = new Color(120, 110, 96);
-	public static readonly Color Accent = new Color(250, 206, 92);
-	public static readonly Color Good = new Color(98, 196, 98);
-	public static readonly Color Warn = new Color(232, 168, 62);
-	public static readonly Color Bad = new Color(222, 76, 64);
-	public static readonly Color Info = new Color(92, 186, 232);
 	public static readonly Color BarBack = new Color(12, 9, 7, 230);
 
 	/// <summary>Green at full, yellow at half, red when low.</summary>
 	public static Color Health(float fraction) =>
 		fraction > 0.5f ? Color.Lerp(Warn, Good, (fraction - 0.5f) * 2f) : Color.Lerp(Bad, Warn, Math.Max(0f, fraction) * 2f);
+}
+
+/// <summary>The game's own bar graphics (from the hero's vitals frame).</summary>
+public enum BarStyle
+{
+	Health,   // red
+	Stamina,  // yellow
+	Mana,     // blue
+	Ire,      // orange
+	Xp,       // green ribbon
+	Fill,     // blue fill bar (progress)
 }
 
 public static partial class Ui
@@ -66,7 +79,7 @@ public static partial class Ui
 		tooltip = null;
 	}
 
-	// ---------- primitives ----------
+	// ---------- low-level ----------
 
 	private static Texture2D pixel;
 	private static readonly AccessTools.FieldRef<wg2DRenderer, SpriteBatch> BatchRef = AccessTools.FieldRefAccess<wg2DRenderer, SpriteBatch>("spriteBatch");
@@ -86,12 +99,12 @@ public static partial class Ui
 		}
 	}
 
-	/// <summary>A solid rectangle (drawn in order with text and sprites, unlike the renderer's DrawLine).</summary>
+	/// <summary>A solid rectangle. Colors are normal (not premultiplied): new Color(r, g, b, alpha) works as expected.</summary>
 	public static void Fill(Rectangle r, Color c)
 	{
-		if (r.Width > 0 && r.Height > 0)
+		if (r.Width > 0 && r.Height > 0 && c.A > 0)
 		{
-			Batch.Draw(Pixel, r, c);
+			Batch.Draw(Pixel, r, c.A == 255 ? c : Color.FromNonPremultiplied(c.R, c.G, c.B, c.A));
 		}
 	}
 
@@ -103,49 +116,36 @@ public static partial class Ui
 		Fill(new Rectangle(r.Right - thickness, r.Y, thickness, r.Height), c);
 	}
 
-	/// <summary>A dark box with a thin border: the base for cards, sections and list rows.</summary>
+	/// <summary>A flat box with a thin border (for small details; prefer <see cref="Box"/> for panels).</summary>
 	public static void Panel(Rectangle r, Color? fill = null, Color? border = null)
 	{
 		Fill(r, fill ?? Palette.Panel);
 		Outline(r, border ?? Palette.Border);
 	}
 
-	/// <summary>A horizontal divider line.</summary>
-	public static void Separator(int x, int y, int width) => Fill(new Rectangle(x, y, width, 1), Palette.Border);
+	/// <summary>A thin divider line.</summary>
+	public static void Separator(int x, int y, int width) => Fill(new Rectangle(x, y, width, 1), new Color((int)Palette.Border.R, Palette.Border.G, Palette.Border.B, 170));
 
-	/// <summary>A progress bar; label (optional) is centered on it.</summary>
-	public static void Bar(Rectangle r, float fraction, Color fill, string label = null, UiFont font = UiFont.Small)
-	{
-		Fill(r, Palette.BarBack);
-		fraction = MathHelper.Clamp(fraction, 0f, 1f);
-		Fill(new Rectangle(r.X + 1, r.Y + 1, (int)((r.Width - 2) * fraction), r.Height - 2), fill);
-		Fill(new Rectangle(r.X + 1, r.Y + 1, (int)((r.Width - 2) * fraction), Math.Max(1, (r.Height - 2) / 3)), new Color(255, 255, 255, 40));
-		Outline(r, Palette.Border);
-		if (label != null)
-		{
-			TextCentered(label, r, Palette.Text, font);
-		}
-	}
+	// ---------- game sprites ----------
 
-	/// <summary>
-	/// A bar centered on 0 for a value in [-max, max], drawn as pips: negative values fill left in negColor,
-	/// positive values fill right in posColor.
-	/// </summary>
-	public static void CenterBar(Rectangle r, int value, int max, Color negColor, Color posColor)
+	private static readonly Dictionary<string, dmSprite> sprites = new Dictionary<string, dmSprite>();
+
+	/// <summary>One of the game's sprites by name (cached). Names are in Content\SpriteData\*.txt.</summary>
+	public static dmSprite GameSprite(string name)
 	{
-		Fill(r, Palette.BarBack);
-		int n = max * 2;
-		float pip = (r.Width - 2) / (float)n;
-		for (int i = 0; i < n; i++)
+		if (!sprites.TryGetValue(name, out dmSprite sp))
 		{
-			int px = r.X + 1 + (int)(i * pip);
-			var cell = new Rectangle(px + 1, r.Y + 2, Math.Max(1, (int)pip - 2), r.Height - 4);
-			int slot = i < max ? i - max : i - max + 1; // -max..-1, 1..max
-			bool on = value < 0 ? slot < 0 && slot >= value : value > 0 && slot > 0 && slot <= value;
-			Fill(cell, on ? (slot < 0 ? negColor : posColor) : new Color(60, 48, 38, 200));
+			try
+			{
+				sp = Dm.Renderer.GetSpriteByName(name);
+			}
+			catch
+			{
+				sp = default;
+			}
+			sprites[name] = sp;
 		}
-		Fill(new Rectangle(r.X + r.Width / 2, r.Y - 2, 1, r.Height + 4), Palette.TextDim);
-		Outline(r, Palette.Border);
+		return sp;
 	}
 
 	/// <summary>Draws a sprite scaled to fit inside a box, centered, keeping its aspect ratio.</summary>
@@ -158,6 +158,23 @@ public static partial class Ui
 		float scale = Math.Min(box.Width / (float)sprite.Width, box.Height / (float)sprite.Height);
 		int w = (int)(sprite.Width * scale), h = (int)(sprite.Height * scale);
 		Dm.Renderer.DrawSpriteToScreenCoordinates(sprite, box.X + (box.Width - w) / 2, box.Y + (box.Height - h) / 2, w, h, false, tint ?? Color.White);
+	}
+
+	/// <summary>Draws a game sprite by name, fitted in a box (e.g. "ui_favorite_heart", "ui_lock", "ui_levelup").</summary>
+	public static void Icon(string spriteName, Rectangle box, Color? tint = null) => Sprite(GameSprite(spriteName), box, tint);
+
+	/// <summary>Draws a game sprite stretched to fill a rectangle (or a horizontal part of it: 0..1).</summary>
+	public static void Stretch(string spriteName, Rectangle r, float part = 1f, Color? tint = null)
+	{
+		dmSprite sp = GameSprite(spriteName);
+		if (sp.Width <= 0 || part <= 0f)
+		{
+			return;
+		}
+		part = Math.Min(1f, part);
+		var src = new Rectangle(sp.xLoc, sp.yLoc, Math.Max(1, (int)(sp.Width * part)), sp.Height);
+		var dst = new Rectangle(r.X, r.Y, Math.Max(1, (int)(r.Width * part)), r.Height);
+		Batch.Draw(Dm.Renderer.texturesByID[sp.iTextureID].Texture, dst, src, tint ?? Color.White);
 	}
 
 	private static readonly Dictionary<string, dmSpecialPower> powers = new Dictionary<string, dmSpecialPower>();
@@ -196,46 +213,100 @@ public static partial class Ui
 		return true;
 	}
 
-	private static readonly Dictionary<string, dmSprite> sprites = new Dictionary<string, dmSprite>();
+	// ---------- game boxes, buttons, bars ----------
 
 	/// <summary>
-	/// Draws one of the game's sprites by name, fitted in a box (e.g. "ui_favorite_heart", "ui_lock", "ui_attack_block",
-	/// "condition_regen", "ui_levelup", "single_star_font"; names are in Content\SpriteData\*.txt).
+	/// The game's dark text box (the one used for text fields): the base for cards, rows, tabs and sections.
+	/// The game draws boxes in 32-pixel tiles, so the size is rounded to 32; lay out on a 32-pixel grid.
+	/// Returns the rectangle actually covered. highlighted = gold border (selected).
 	/// </summary>
-	public static void Icon(string spriteName, Rectangle box, Color? tint = null)
+	public static Rectangle Box(Rectangle r, bool highlighted = false)
 	{
-		if (!sprites.TryGetValue(spriteName, out dmSprite sp))
-		{
-			try
-			{
-				sp = Dm.Renderer.GetSpriteByName(spriteName);
-			}
-			catch
-			{
-				sp = default;
-			}
-			sprites[spriteName] = sp;
-		}
-		Sprite(sp, box, tint);
+		int tw = Math.Max(2, r.Width / 32), th = Math.Max(1, r.Height / 32);
+		Dm.Renderer.DrawParchmentTextBox(r.X, r.Y, tw, th, highlighted);
+		return new Rectangle(r.X, r.Y, tw * 32, th * 32);
 	}
 
-	/// <summary>An on/off switch (pill with a knob). Returns true while hovered.</summary>
-	public static bool Switch(string id, Rectangle r, bool on, Action onToggle, string tooltipText = null, int stackLevel = WindowLevel + 1)
+	/// <summary>The game's progress bar graphics, stretched to a rectangle, with an optional centered label.</summary>
+	public static void GameBar(BarStyle style, Rectangle r, float fraction, string label = null, UiFont font = UiFont.Small)
 	{
+		fraction = MathHelper.Clamp(fraction, 0f, 1f);
+		Stretch("ook_ui_bag_statbar_empty", r);
+		string fill = style switch
+		{
+			BarStyle.Health => "ook_ui_bag_healthbar",
+			BarStyle.Stamina => "ook_ui_bag_staminabar",
+			BarStyle.Mana => "ook_ui_bag_manabar",
+			BarStyle.Ire => "ook_ui_bag_irebar",
+			_ => "ook_ui_bag_manabar",
+		};
+		if (style == BarStyle.Xp)
+		{
+			Stretch("ook_ui_bag_xp_ribbon", new Rectangle(r.X + 3, r.Y + r.Height / 4, r.Width - 6, r.Height / 2), fraction);
+		}
+		else
+		{
+			Stretch(fill, r, fraction);
+		}
+		if (label != null)
+		{
+			bool shadows = Dm.Renderer.bForceDropShadows;
+			Dm.Renderer.bForceDropShadows = true;
+			TextCentered(label, r, Color.White, font);
+			Dm.Renderer.bForceDropShadows = shadows;
+		}
+	}
+
+	/// <summary>Backwards-compatible bar: picks the closest game bar for the color.</summary>
+	public static void Bar(Rectangle r, float fraction, Color fill, string label = null, UiFont font = UiFont.Small)
+	{
+		BarStyle s = fill.R > 200 && fill.G < 120 ? BarStyle.Health : fill.R > 200 && fill.G > 150 && fill.B < 120 ? BarStyle.Stamina
+			: fill.G > fill.R && fill.G > fill.B ? BarStyle.Xp : fill.R > 200 ? BarStyle.Ire : BarStyle.Mana;
+		GameBar(s, r, fraction, label, font);
+	}
+
+	/// <summary>
+	/// The game's slider (brown rail with end caps and a red gem marker) showing a value in [min, max],
+	/// with a tick at the middle. Use for two-sided stats.
+	/// </summary>
+	public static void Slider(Rectangle r, int value, int min, int max)
+	{
+		int capW = r.Height;
+		var rail = new Rectangle(r.X, r.Y + (r.Height - 20) / 2, r.Width, 20);
+		Stretch("ui_slider_left_cap", new Rectangle(rail.X, rail.Y, capW, rail.Height));
+		Stretch("ui_slider_base", new Rectangle(rail.X + capW, rail.Y, rail.Width - 2 * capW, rail.Height));
+		Stretch("ui_slider_right_cap", new Rectangle(rail.Right - capW, rail.Y, capW, rail.Height));
+		int inner = rail.Width - 2 * capW;
+		int mid = rail.X + capW + inner / 2;
+		Fill(new Rectangle(mid, rail.Y + 3, 2, rail.Height - 6), new Color(60, 40, 24, 220));
+		float t = (value - min) / (float)Math.Max(1, max - min);
+		int mx = rail.X + capW + (int)(inner * t);
+		int mh = r.Height + 8;
+		int mw = Math.Max(8, mh * 19 / 42);
+		Stretch("ui_slider_marker", new Rectangle(mx - mw / 2, r.Y + r.Height / 2 - mh / 2, mw, mh));
+	}
+
+	/// <summary>
+	/// An On/Off switch in the style of the game's Options menu: a 64x32 game box reading "On" (gold border) or "Off".
+	/// Returns true while hovered.
+	/// </summary>
+	public static bool Checkbox(string id, int x, int y, bool on, Action onToggle, string tooltipText = null, int stackLevel = WindowLevel + 1)
+	{
+		var r = new Rectangle(x, y, 64, 32);
 		ui_mouseFrame f = Area(id, r, () => onToggle?.Invoke(), stackLevel);
 		bool hot = Hovered(f);
-		Color track = on ? new Color(52, 120, 60, 240) : new Color(56, 48, 42, 240);
-		Fill(r, track);
-		Outline(r, hot ? Palette.BorderBright : on ? Palette.Good : Palette.Border);
-		int k = r.Height - 6;
-		var knob = new Rectangle(on ? r.Right - k - 3 : r.X + 3, r.Y + 3, k, k);
-		Fill(knob, on ? new Color(220, 240, 210) : Palette.TextDim);
+		Box(r, on);
+		TextCentered(on ? "On" : "Off", r, on ? Palette.Accent : hot ? Palette.Text : Palette.TextMuted, UiFont.Medium);
 		if (hot && tooltipText != null)
 		{
 			Tooltip(tooltipText);
 		}
 		return hot;
 	}
+
+	/// <summary>Old name for <see cref="Checkbox"/> (now draws the game's checkbox).</summary>
+	public static bool Switch(string id, Rectangle r, bool on, Action onToggle, string tooltipText = null, int stackLevel = WindowLevel + 1) =>
+		Checkbox(id, r.X, r.Y + (r.Height - 24) / 2, on, onToggle, tooltipText, stackLevel);
 
 	// ---------- text ----------
 
@@ -265,7 +336,7 @@ public static partial class Ui
 		return Dm.Renderer.GetActiveFont().MeasureString(StripCodes(text));
 	}
 
-	public static int LineHeight(UiFont font) => font == UiFont.Large ? 34 : font == UiFont.Medium ? 26 : 20;
+	public static int LineHeight(UiFont font) => font == UiFont.Large || font == UiFont.Title ? 34 : font == UiFont.Medium ? 26 : 20;
 
 	public static void TextCentered(string text, Rectangle r, Color? color = null, UiFont font = UiFont.Small)
 	{
@@ -294,19 +365,34 @@ public static partial class Ui
 	// ---------- widgets ----------
 
 	/// <summary>
-	/// A boxed button with hover/selected states and an optional tooltip. Returns true while hovered.
+	/// A button drawn with the game's steel button graphics (lit when hovered or selected). Width is rounded to
+	/// 32-pixel tiles. Returns true while hovered.
 	/// </summary>
 	public static bool BoxButton(string id, Rectangle r, string label, Action onClick, bool enabled = true, bool selected = false,
 		UiFont font = UiFont.Small, string tooltipText = null, Color? accent = null, int stackLevel = WindowLevel + 1)
 	{
-		ui_mouseFrame f = Area(id, r, enabled ? () => { dmAudio.PlayUIFX("ui_click_01"); onClick?.Invoke(); } : null, stackLevel);
+		int tw = Math.Max(2, (r.Width + 16) / 32);
+		int th = Math.Max(1, (r.Height + 16) / 32);
+		var box = new Rectangle(r.X, r.Y, tw * 32, th * 32);
+		ui_mouseFrame f = Area(id, box, enabled ? () => { dmAudio.PlayUIFX("ui_click_01"); onClick?.Invoke(); } : null, stackLevel);
 		bool hot = Hovered(f);
-		Color fill = !enabled ? new Color(30, 26, 22, 200) : selected ? Palette.PanelSelected : hot ? Palette.PanelHover : Palette.PanelRaised;
-		Color border = !enabled ? Palette.TextMuted : selected || hot ? (accent ?? Palette.BorderBright) : Palette.Border;
-		Fill(r, fill);
-		Outline(r, border);
+		if (enabled && (hot || selected))
+		{
+			Dm.Renderer.DrawHighlightButton(box.X, box.Y, tw, th);
+		}
+		else
+		{
+			Dm.Renderer.DrawDarkButton(box.X, box.Y, tw, th);
+		}
+		if (!enabled)
+		{
+			Fill(box, new Color(20, 16, 12, 140));
+		}
 		Color text = !enabled ? Palette.TextMuted : selected ? Palette.Accent : hot ? Color.White : (accent ?? Palette.Text);
-		TextCentered(label, r, text, font);
+		bool shadows = Dm.Renderer.bForceDropShadows;
+		Dm.Renderer.bForceDropShadows = true;
+		TextCentered(label, box, text, font);
+		Dm.Renderer.bForceDropShadows = shadows;
 		if (hot && tooltipText != null)
 		{
 			Tooltip(tooltipText);
@@ -314,34 +400,35 @@ public static partial class Ui
 		return hot;
 	}
 
-	/// <summary>Width a BoxButton needs for a label.</summary>
-	public static int ButtonWidth(string label, UiFont font = UiFont.Small) => (int)Measure(label, font).X + 20;
+	/// <summary>Width a BoxButton needs for a label (a multiple of 32).</summary>
+	public static int ButtonWidth(string label, UiFont font = UiFont.Small) => ((int)Measure(label, font).X + 24 + 31) / 32 * 32;
 
-	/// <summary>A small rounded "pill" label (status, tag). Draws at x and returns the x after it (plus a gap).</summary>
+	/// <summary>A small colored tag (status, count). Draws at x and returns the x after it.</summary>
 	public static int Chip(int x, int y, string text, Color color, UiFont font = UiFont.Small)
 	{
-		Vector2 size = Measure(text, font);
-		var r = new Rectangle(x, y, (int)size.X + 12, LineHeight(font) + 2);
-		Fill(r, new Color(color.R / 4, color.G / 4, color.B / 4, 220));
-		Outline(r, color);
-		TextCentered(text, r, color, font);
-		return r.Right + 6;
+		Text(text, x, y + 1, color, font);
+		return x + (int)Measure(text, font).X + 14;
 	}
 
 	/// <summary>
-	/// Row of tabs. Returns the tab row's height. Disabled tabs (enabled[i] == false) are grayed out.
+	/// Row of tabs (game boxes; the current one has a gold border). Returns the row height (32).
+	/// Disabled tabs (enabled[i] == false) are grayed out.
 	/// </summary>
 	public static int Tabs(string id, int x, int y, string[] labels, int current, Action<int> onPick, bool[] enabled = null, UiFont font = UiFont.Medium)
 	{
-		int h = LineHeight(font) + 10;
 		for (int i = 0; i < labels.Length; i++)
 		{
 			int idx = i;
-			int w = Math.Max(96, ButtonWidth(labels[i], font) + 16);
-			BoxButton(id + "_tab" + i, new Rectangle(x, y, w, h), labels[i], () => onPick(idx), enabled == null || enabled[i], i == current, font);
+			bool on = enabled == null || enabled[i];
+			int w = Math.Max(96, ((int)Measure(labels[i], font).X + 32 + 31) / 32 * 32);
+			var r = new Rectangle(x, y, w, 32);
+			ui_mouseFrame f = Area(id + "_tab" + i, r, on ? () => { dmAudio.PlayUIFX("ui_click_01"); onPick(idx); } : (Action)null, WindowLevel + 1);
+			bool hot = Hovered(f);
+			Box(r, i == current);
+			TextCentered(labels[i], r, !on ? Palette.TextMuted : i == current ? Palette.Accent : hot ? Color.White : Palette.TextDim, font);
 			x += w + 4;
 		}
-		return h;
+		return 32;
 	}
 
 	// ---------- tooltips ----------
@@ -364,9 +451,9 @@ public static partial class Ui
 		{
 			w = Math.Max(w, (int)Measure(l).X);
 		}
-		int h = lines.Length * LineHeight(UiFont.Small);
+		int tw = (w + 28 + 31) / 32, th = (lines.Length * LineHeight(UiFont.Small) + 14 + 31) / 32;
 		Point m = Mouse;
-		var r = new Rectangle(m.X + 18, m.Y + 18, w + 20, h + 12);
+		var r = new Rectangle(m.X + 20, m.Y + 20, tw * 32, th * 32);
 		if (r.Right > tr.fWindowXSize - 4)
 		{
 			r.X = m.X - r.Width - 8;
@@ -376,11 +463,11 @@ public static partial class Ui
 			r.Y = m.Y - r.Height - 8;
 		}
 		tr.BeginSpriteBatch();
-		Fill(r, new Color(14, 10, 8, 245));
-		Outline(r, Palette.BorderBright);
+		tr.DrawParchmentTextBox(r.X, r.Y, tw, th, true);
+		int ty = r.Y + (r.Height - lines.Length * LineHeight(UiFont.Small)) / 2;
 		for (int i = 0; i < lines.Length; i++)
 		{
-			Text(lines[i], r.X + 10, r.Y + 6 + i * LineHeight(UiFont.Small), Palette.Text);
+			Text(lines[i], r.X + 14, ty + i * LineHeight(UiFont.Small), Palette.Text);
 		}
 		tr.EndSpriteBatch();
 		tooltip = null;
@@ -419,18 +506,19 @@ public static partial class Ui
 		}
 		wg2DRenderer tr = Dm.Renderer;
 		tr.BeginSpriteBatch();
-		int y = 64;
+		int y = 56;
 		foreach (ToastItem t in toasts)
 		{
-			float left = (float)(t.Until - DateTime.Now).TotalSeconds;
-			byte a = (byte)(255 * MathHelper.Clamp(left / 0.4f, 0f, 1f));
 			Vector2 size = Measure(t.Text, UiFont.Medium);
-			var r = new Rectangle((int)(tr.fWindowXSize - size.X) / 2 - 18, y, (int)size.X + 36, 38);
-			Fill(r, new Color((byte)14, (byte)10, (byte)8, (byte)(a * 0.92f)));
-			Fill(new Rectangle(r.X, r.Y, 4, r.Height), new Color(t.Accent.R, t.Accent.G, t.Accent.B, a));
-			Outline(r, new Color(Palette.Border.R, Palette.Border.G, Palette.Border.B, a));
-			TextCentered(t.Text, r, new Color(Palette.Text.R, Palette.Text.G, Palette.Text.B, a), UiFont.Medium);
-			y += 44;
+			int tw = ((int)size.X + 48 + 31) / 32;
+			int x = ((int)tr.fWindowXSize - tw * 32) / 2;
+			tr.DrawParchmentTextBox(x, y, tw, 2, false);
+			Fill(new Rectangle(x + 6, y + 8, 3, 48), t.Accent);
+			bool shadows = tr.bForceDropShadows;
+			tr.bForceDropShadows = true;
+			TextCentered(t.Text, new Rectangle(x, y, tw * 32, 64), Palette.Text, UiFont.Medium);
+			tr.bForceDropShadows = shadows;
+			y += 70;
 		}
 		tr.EndSpriteBatch();
 	}
@@ -438,28 +526,29 @@ public static partial class Ui
 	// ---------- windows ----------
 
 	/// <summary>
-	/// The standard modal window: dims the screen, blocks clicks behind it, draws a centered parchment box with a
-	/// title bar (icon character optional), a subtitle on the right and a close [X]. Returns the content rectangle
-	/// below the title bar. Call inside BeginSpriteBatch/EndSpriteBatch.
+	/// The standard modal window: dims the screen, blocks clicks behind it, draws a centered parchment window
+	/// (widthUnits x heightUnits tiles of 32 px) with a title, an optional subtitle and a close button.
+	/// Returns the content rectangle below the title. Call inside BeginSpriteBatch/EndSpriteBatch.
 	/// </summary>
 	public static Rectangle ModalWindow(string id, int widthUnits, int heightUnits, string title, Action onClose, string subtitle = null)
 	{
 		wg2DRenderer tr = Dm.Renderer;
 		DimAndBlock(id);
-		int w = widthUnits * 32, h = heightUnits * 32 + 32;
+		int w = widthUnits * 32, h = heightUnits * 32;
 		int x = (int)(tr.fWindowXSize - w) / 2;
 		int y = Math.Max(4, (int)(tr.fWindowYSize - h) / 2);
 		tr.DrawParchmentBox(x, y, widthUnits, heightUnits);
-		var bar = new Rectangle(x + 14, y + 12, w - 28, 40);
-		Fill(bar, new Color(0, 0, 0, 90));
-		Fill(new Rectangle(bar.X, bar.Bottom, bar.Width, 2), Palette.BorderBright);
-		Text(title, bar.X + 12, bar.Y + 3, Palette.Accent, UiFont.Large);
+		bool shadows = tr.bForceDropShadows;
+		tr.bForceDropShadows = true;
+		Text(title, x + 28, y + 14, Palette.Accent, UiFont.Title);
+		tr.bForceDropShadows = shadows;
 		if (subtitle != null)
 		{
-			TextRight(subtitle, bar.Right - 52, bar.Y + 11, Palette.TextDim);
+			TextRight(subtitle, x + w - 84, y + 24, Palette.TextDim);
 		}
-		BoxButton(id + "_close", new Rectangle(bar.Right - 40, bar.Y + 5, 32, 30), "X", onClose, tooltipText: "Close (Esc)", stackLevel: WindowLevel + 2);
-		return new Rectangle(x + 18, bar.Bottom + 10, w - 36, y + h - 20 - (bar.Bottom + 10));
+		BoxButton(id + "_close", new Rectangle(x + w - 76, y + 14, 64, 32), "X", onClose, tooltipText: "Close (Esc)", font: UiFont.Medium, stackLevel: WindowLevel + 2);
+		Separator(x + 24, y + 56, w - 48);
+		return new Rectangle(x + 24, y + 66, w - 48, h - 66 - 20);
 	}
 
 	// ---------- dragging ----------

@@ -85,6 +85,8 @@ public enum UiFont
 	Small,
 	Medium,
 	Large,
+	/// <summary>The game's title font (main menu headings).</summary>
+	Title,
 }
 
 /// <summary>
@@ -203,7 +205,7 @@ public static partial class Ui
 	public static void SetFont(UiFont font)
 	{
 		wg2DRenderer tr = Dm.Renderer;
-		tr.SetActiveFont(font == UiFont.Large ? tr.fontNyala30 : font == UiFont.Medium ? tr.fontNyala24 : tr.fontNyala18);
+		tr.SetActiveFont(font == UiFont.Title ? tr.fontXarNormal30 : font == UiFont.Large ? tr.fontNyala30 : font == UiFont.Medium ? tr.fontNyala24 : tr.fontNyala18);
 	}
 
 	/// <summary>Text with the game's color codes (^3 yellow, ^1 red, ^5 blue, ^7 white...).</summary>

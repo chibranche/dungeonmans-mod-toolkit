@@ -131,6 +131,21 @@ Rectangle b = Ui.Button("mymod_ok", 120, 180, "OK", () => open = false);
 Ui.Button("mymod_cancel", b.Right + 12, 180, "Cancel", Close, enabled: canCancel);
 g.theRenderer.EndSpriteBatch();
 ```
+**Use the game's own look.** These draw the game's real UI graphics, so mod windows look like part of Dungeonmans
+(the game builds boxes from 32-pixel tiles, so lay your windows out on a 32-pixel grid):
+
+| Helper | Draws |
+|---|---|
+| `Ui.ModalWindow(id, wTiles, hTiles, title, onClose)` | The parchment window, title in the game's title font, close button; returns the content area |
+| `Ui.Box(rect, highlighted)` | The dark text box (gold border when highlighted): cards, rows, sections, tabs |
+| `Ui.BoxButton(id, rect, label, onClick, ...)` | The game's steel buttons (lit on hover) |
+| `Ui.GameBar(BarStyle.Health / Stamina / Mana / Ire / Xp, rect, fraction, label)` | The hero vitals bars |
+| `Ui.Slider(rect, value, min, max)` | The game's slider with the red gem marker |
+| `Ui.Checkbox(id, x, y, on, onToggle)` | An On/Off box like the Options menu |
+| `Ui.Tabs(...)`, `Ui.Tooltip(text)`, `Ui.Toast(text)` | Tabs, tooltips and pop-up notices in game boxes |
+| `Ui.Icon("sprite_name", rect)`, `Ui.Stretch(...)`, `Ui.Sprite(sprite, rect)` | Any game sprite (names in `Content\SpriteData\*.txt`), e.g. `ui_favorite_heart`, `npc_academy_headmaster`, `petbird_center`, `ook_ui_bag_top` |
+| `Ui.Text(..., UiFont.Title)` | The game's title font |
+
 - `Ui.IsBusy(g)`: true when any game menu, dialog, map or mod window is open. Hide HUD-style windows when it's true.
 - `Ui.AddModal(() => myWindowOpen)`: makes your window count in `IsBusy`, so other mods stay out of its way.
 - Also: `Ui.Area(id, rect, onClick)` + `Ui.Hovered(frame)`, `Ui.WrappedText`, `Ui.DimAndBlock`, `Ui.ScreenSize`, `Ui.SetFont`.

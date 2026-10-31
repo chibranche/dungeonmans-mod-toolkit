@@ -27,7 +27,7 @@ internal static class SettingsPanel
 		public LoadedMod Mod;
 		public ModToggle Toggle;
 		public string Group;
-		public int Height => Kind == Kind.Mod ? 52 : Kind == Kind.Group ? 34 : 32;
+		public int Height => Kind == Kind.Mod ? 72 : 32;
 		public bool Selectable => Kind != Kind.Group;
 	}
 
@@ -232,7 +232,7 @@ internal static class SettingsPanel
 		int total = rows.Sum(r => r.Height);
 		int maxListH = (int)tr.fWindowYSize - 260;
 		int listH = Math.Min(total, maxListH);
-		int heightUnits = (listH + 130) / 32 + 1;
+		int heightUnits = (listH + 66 + 20 + 36 + 31) / 32;
 
 		tr.BeginSpriteBatch();
 		tr.bForceDropShadows = true;
@@ -265,7 +265,7 @@ internal static class SettingsPanel
 			int h = r.Height;
 			if (y + h > list.Y && y < list.Bottom - 2 && y >= list.Y - 2)
 			{
-				DrawRow(r, i, new Rectangle(list.X, y, list.Width - 14, h - 4));
+				DrawRow(r, i, new Rectangle(list.X, y, list.Width - 14, h));
 			}
 			y += h;
 		}
@@ -301,20 +301,17 @@ internal static class SettingsPanel
 				selected = i;
 				Ui.Tooltip(ModHelp(r.Mod));
 			}
-			Ui.Panel(rect, sel || hot ? Palette.PanelHover : Palette.PanelRaised, sel || hot ? Palette.BorderBright : Palette.Border);
-			Ui.Fill(new Rectangle(rect.X, rect.Y, 4, rect.Height), Palette.Accent);
-			Ui.Text(r.Mod.Info.Name, rect.X + 16, rect.Y + 10, Palette.Accent, UiFont.Medium);
-			int x = rect.X + 24 + (int)Ui.Measure(r.Mod.Info.Name, UiFont.Medium).X;
-			x = Ui.Chip(x, rect.Y + 13, "v" + r.Mod.Info.Version, Palette.TextDim);
+			Rectangle box = Ui.Box(new Rectangle(rect.X, rect.Y, rect.Width, 64), sel || hot);
+			Ui.Text(r.Mod.Info.Name, box.X + 16, box.Y + 8, Palette.Accent, UiFont.Large);
 			(string text, Color color) = State(r.Mod);
-			Ui.Chip(x, rect.Y + 13, text, color);
-			Ui.Switch("modkit_settings_sw_" + i, new Rectangle(rect.Right - 66, rect.Y + 13, 52, 24), r.Mod.Enabled, () => Toggle(idx), stackLevel: 32);
+			Ui.Text("v" + r.Mod.Info.Version + "    " + text, box.X + 18, box.Y + 40, color);
+			Ui.Checkbox("modkit_settings_sw_" + i, box.Right - 84, box.Y + 16, r.Mod.Enabled, () => Toggle(idx), stackLevel: 32);
 			break;
 		}
 		case Kind.Group:
-			Ui.Text(r.Group.ToUpperInvariant(), rect.X + 6, rect.Y + 10, Palette.Accent);
-			int tw = (int)Ui.Measure(r.Group.ToUpperInvariant()).X;
-			Ui.Fill(new Rectangle(rect.X + tw + 16, rect.Y + 21, rect.Width - tw - 22, 1), Palette.Border);
+			Ui.Text(r.Group, rect.X + 6, rect.Y + 6, Palette.Accent, UiFont.Medium);
+			int tw = (int)Ui.Measure(r.Group, UiFont.Medium).X;
+			Ui.Separator(rect.X + tw + 18, rect.Y + 19, rect.Width - tw - 24);
 			break;
 		default:
 		{
@@ -331,10 +328,10 @@ internal static class SettingsPanel
 			}
 			if (sel || hot)
 			{
-				Ui.Fill(rect, Palette.PanelHover);
+				Ui.Fill(new Rectangle(rect.X + 4, rect.Y + 2, rect.Width - 8, rect.Height - 4), new Color(255, 230, 170, 40));
 			}
-			Ui.Switch("modkit_settings_sw_" + i, new Rectangle(rect.X + 14, rect.Y + 4, 44, 20), on, () => Toggle(idx), stackLevel: 32);
-			Ui.Text(r.Toggle.Label, rect.X + 72, rect.Y + 4, on ? Palette.Text : Palette.TextMuted);
+			Ui.Text(r.Toggle.Label, rect.X + 24, rect.Y + 4, on ? Palette.Text : Palette.TextMuted, UiFont.Medium);
+			Ui.Checkbox("modkit_settings_sw_" + i, rect.Right - 84, rect.Y, on, () => Toggle(idx), stackLevel: 32);
 			break;
 		}
 		}
