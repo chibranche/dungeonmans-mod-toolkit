@@ -15,7 +15,7 @@ Nothing in `Dungeonmans.dll` is modified: ModKit runs as a .NET startup hook.
 
 ## For players
 
-1. Download `DungeonmansModKit-<version>.zip` from the Releases page (mods often bundle it).
+1. Download `DungeonmansModKit-<version>.zip` from the Releases page.
 2. Steam: right-click Dungeonmans > Manage > Browse local files, and extract the zip into that folder.
 3. Close the game and double-click `ModKit-Install.bat`. Run it again after a Steam update.
 4. Put mods in `Mods\`. Uninstall with `ModKit-Uninstall.bat`.
