@@ -19,13 +19,25 @@ if (Get-Process -Name Dungeonmans -ErrorAction SilentlyContinue) {
 }
 
 $json = Get-Content $config -Raw | ConvertFrom-Json
+if (-not $json.runtimeOptions.configProperties) {
+	$json.runtimeOptions | Add-Member -NotePropertyName configProperties -NotePropertyValue ([pscustomobject]@{}) -Force
+}
 $props = $json.runtimeOptions.configProperties
 $hasHook = $props.PSObject.Properties.Name -contains "STARTUP_HOOKS"
+# STARTUP_HOOKS is a ";" list: other tools' hooks are kept, only ModKit's own entry (any folder) is replaced.
+$others = @()
+if ($hasHook) { $others = @("$($props.STARTUP_HOOKS)" -split ";" | Where-Object { $_ -and ($_ -notlike "*DungeonmansModKit.dll") }) }
+
+function Save-Config {
+	# UTF-8 without BOM: the .NET host is picky about the runtimeconfig.
+	[System.IO.File]::WriteAllText($config, ($json | ConvertTo-Json -Depth 10))
+}
 
 if ($Uninstall) {
 	if ($hasHook) {
-		$props.PSObject.Properties.Remove("STARTUP_HOOKS")
-		[System.IO.File]::WriteAllText($config, ($json | ConvertTo-Json -Depth 10))
+		if ($others.Count -gt 0) { $props.STARTUP_HOOKS = $others -join ";" }
+		else { $props.PSObject.Properties.Remove("STARTUP_HOOKS") }
+		Save-Config
 	}
 	Write-Host "ModKit uninstalled: the game starts without mods. (The ModKit and Mods folders are left in place; delete them if you like.)"
 	return
@@ -36,27 +48,13 @@ if (-not (Test-Path $hookDll)) { throw "Missing $hookDll" }
 # Keep a copy of the untouched file (refreshed whenever the current one has no hook, e.g. after a Steam update).
 if (-not $hasHook) { Copy-Item $config "$config.vanilla" -Force }
 
-if ($hasHook) { $props.STARTUP_HOOKS = $hookDll }
-else { $props | Add-Member -NotePropertyName STARTUP_HOOKS -NotePropertyValue $hookDll }
-# UTF-8 without BOM: the .NET host is picky about the runtimeconfig.
-[System.IO.File]::WriteAllText($config, ($json | ConvertTo-Json -Depth 10))
+$value = (@($others) + $hookDll) -join ";"
+if ($hasHook) { $props.STARTUP_HOOKS = $value }
+else { $props | Add-Member -NotePropertyName STARTUP_HOOKS -NotePropertyValue $value }
+Save-Config
 
 $mods = Join-Path $gameDir "Mods"
 New-Item -ItemType Directory -Force $mods | Out-Null
-
-# One-time migration from the pre-ModKit QoL mod (<game>\QoLMod): keep its settings, then retire the folder.
-$oldQoL = Join-Path $gameDir "QoLMod"
-$newQoL = Join-Path $mods "QoL"
-if ((Test-Path $oldQoL) -and (Test-Path $newQoL)) {
-	foreach ($f in "config.json", "proof_presets.json", "map_filters.json") {
-		$src = Join-Path $oldQoL $f
-		if ((Test-Path $src) -and -not (Test-Path (Join-Path $newQoL $f))) { Copy-Item $src $newQoL }
-	}
-	$retired = "$oldQoL.old"
-	if (Test-Path $retired) { Remove-Item $retired -Recurse -Force }
-	Rename-Item $oldQoL (Split-Path $retired -Leaf)
-	Write-Host "Moved your old QoL settings to Mods\QoL (old folder kept as QoLMod.old)."
-}
 
 $list = Get-ChildItem $mods -Directory | ForEach-Object { $_.Name }
 Write-Host "ModKit installed. Mods found: $(if ($list) { $list -join ', ' } else { 'none yet' })"

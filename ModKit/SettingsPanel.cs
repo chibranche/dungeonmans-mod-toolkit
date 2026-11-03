@@ -29,6 +29,7 @@ internal static class SettingsPanel
 		public string Group;
 		public int Height => Kind == Kind.Mod ? 72 : 32;
 		public bool Selectable => Kind != Kind.Group;
+		public bool HasDocs;
 	}
 
 	private static List<Row> rows = new List<Row>();
@@ -38,7 +39,7 @@ internal static class SettingsPanel
 		rows = new List<Row>();
 		foreach (LoadedMod m in Loader.Mods)
 		{
-			rows.Add(new Row { Kind = Kind.Mod, Mod = m });
+			rows.Add(new Row { Kind = Kind.Mod, Mod = m, HasDocs = DocsViewer.HasDocs(m) });
 			if (m.Context == null || m.State != "loaded")
 			{
 				continue;
@@ -63,6 +64,11 @@ internal static class SettingsPanel
 	public static void HandleInput(dmGame g)
 	{
 		List<ActionButton> a = g.theInput.ExecutedActions;
+		if (DocsViewer.IsOpen)
+		{
+			DocsViewer.HandleInput(a);
+			return;
+		}
 		if (a.Contains(ActionButton.Close))
 		{
 			Close();
@@ -110,6 +116,10 @@ internal static class SettingsPanel
 
 	public static void Open()
 	{
+		if (broken)
+		{
+			return; // the panel failed to draw earlier: opening it would only swallow input
+		}
 		Rebuild();
 		IsOpen = true;
 		scroll = 0;
@@ -118,6 +128,10 @@ internal static class SettingsPanel
 
 	public static void Close()
 	{
+		if (DocsViewer.IsOpen)
+		{
+			DocsViewer.Close();
+		}
 		IsOpen = false;
 		dmAudio.PlayUIFX("ui_back_02");
 	}
@@ -165,11 +179,31 @@ internal static class SettingsPanel
 		return false;
 	}
 
+	// Set after the first draw failure: a broken panel is logged once, not every frame.
+	private static bool broken;
+
 	public static void Draw(dmGame g)
 	{
+		if (broken)
+		{
+			return;
+		}
 		try
 		{
-			if (IsOpen)
+			if (IsOpen && DocsViewer.IsOpen)
+			{
+				try
+				{
+					DocsViewer.Draw(g);
+				}
+				catch (Exception e)
+				{
+					Ui.RecoverBatch();
+					DocsViewer.Close();
+					KitLog.Write("Docs page failed to draw (back to Mod Settings): " + e);
+				}
+			}
+			else if (IsOpen)
 			{
 				DrawPanel(g);
 			}
@@ -183,8 +217,10 @@ internal static class SettingsPanel
 		}
 		catch (Exception e)
 		{
+			Ui.RecoverBatch();
 			IsOpen = false;
-			KitLog.Write("Mod Settings draw failed: " + e);
+			broken = true;
+			KitLog.Write("Mod Settings draw failed (the Mod Settings menu is off until the game restarts): " + e);
 		}
 	}
 
@@ -211,7 +247,7 @@ internal static class SettingsPanel
 
 	private static string ModHelp(LoadedMod m)
 	{
-		string s = (m.Info.Description ?? "") + (string.IsNullOrEmpty(m.Info.Author) ? "" : "\n^7By " + m.Info.Author);
+		string s = "^3" + m.Info.Name + "^7\n" + (m.Info.Description ?? "") + (string.IsNullOrEmpty(m.Info.Author) ? "" : "\n^7By " + m.Info.Author);
 		if (m.Error != null)
 		{
 			string err = m.Error.Split('\n')[0].Trim();
@@ -263,7 +299,7 @@ internal static class SettingsPanel
 		{
 			Row r = rows[i];
 			int h = r.Height;
-			if (y + h > list.Y && y < list.Bottom - 2 && y >= list.Y - 2)
+			if (y >= list.Y - 2 && y + h <= list.Bottom + 2)
 			{
 				DrawRow(r, i, new Rectangle(list.X, y, list.Width - 14, h));
 			}
@@ -302,10 +338,17 @@ internal static class SettingsPanel
 				Ui.Tooltip(ModHelp(r.Mod));
 			}
 			Rectangle box = Ui.Box(new Rectangle(rect.X, rect.Y, rect.Width, 64), sel || hot);
-			Ui.Text(r.Mod.Info.Name, box.X + 16, box.Y + 8, Palette.Accent, UiFont.Large);
+			bool docs = r.HasDocs;
+			Ui.Text(Ui.Fit(r.Mod.Info.Name, box.Width - (docs ? 236 : 120), UiFont.Large), box.X + 16, box.Y + 8, Palette.Accent, UiFont.Large);
 			(string text, Color color) = State(r.Mod);
 			Ui.Text("v" + r.Mod.Info.Version + "    " + text, box.X + 18, box.Y + 40, color);
 			Ui.Checkbox("modkit_settings_sw_" + i, box.Right - 84, box.Y + 16, r.Mod.Enabled, () => Toggle(idx), stackLevel: 32);
+			if (docs)
+			{
+				LoadedMod m = r.Mod;
+				Ui.BoxButton("modkit_settings_docs_" + i, new Rectangle(box.Right - 196, box.Y + 16, 96, 32), "Docs", () => DocsViewer.Open(m),
+					tooltipText: "How " + m.Info.Name + " works, with pictures", stackLevel: 32);
+			}
 			break;
 		}
 		case Kind.Group:

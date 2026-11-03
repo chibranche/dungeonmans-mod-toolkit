@@ -36,6 +36,30 @@ public static class KitLog
 	}
 }
 
+// Config files: written through a temp file so a crash mid-write can't leave half a file, and an unreadable file
+// is kept as "<name>.bad" before anything overwrites it.
+internal static class KitFiles
+{
+	public static void WriteAtomic(string path, string text)
+	{
+		string tmp = path + ".tmp";
+		File.WriteAllText(tmp, text);
+		File.Move(tmp, path, true);
+	}
+
+	public static void KeepBad(string path)
+	{
+		try
+		{
+			File.Copy(path, path + ".bad", true);
+			KitLog.Write("  kept the unreadable file as " + Path.GetFileName(path) + ".bad");
+		}
+		catch
+		{
+		}
+	}
+}
+
 /// <summary>A mod found in the Mods folder, whether it loaded or not.</summary>
 public sealed class LoadedMod
 {
@@ -76,8 +100,8 @@ public static class Loader
 		var core = new Harmony("modkit.core");
 		try
 		{
-			CoreHooks.Register(core);
-			KitLog.Write("  ok   ModKit core hooks");
+			int failed = CoreHooks.Register(core);
+			KitLog.Write(failed == 0 ? "  ok   ModKit core hooks" : "  ModKit core hooks: " + failed + " failed (see above); the rest work");
 		}
 		catch (Exception e)
 		{
@@ -87,6 +111,14 @@ public static class Loader
 		foreach (string folder in Directory.GetDirectories(ModsDir).OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
 		{
 			LoadMod(folder);
+		}
+		try
+		{
+			DevCapture.Start(core);
+		}
+		catch (Exception e)
+		{
+			KitLog.Write("DevCapture could not start: " + e.Message);
 		}
 		KitLog.Write($"done: {mods.Count(m => m.State == "loaded")} loaded, {mods.Count(m => m.State == "disabled")} disabled, {mods.Count(m => m.State == "failed")} failed");
 	}
@@ -144,7 +176,7 @@ public static class Loader
 			KitLog.Write($"{info.Name} {info.Version}: disabled in Mod Settings");
 			return;
 		}
-		if (info.MinModKitVersion != null && Version.TryParse(info.MinModKitVersion, out Version need) && need > KitVersion)
+		if (!string.IsNullOrWhiteSpace(info.MinModKitVersion) && !MeetsKitVersion(info.MinModKitVersion))
 		{
 			mod.State = "failed";
 			mod.Error = $"needs ModKit {info.MinModKitVersion} or newer (this is {KitVersion.ToString(3)})";
@@ -173,9 +205,21 @@ public static class Loader
 				KitLog.Write("  (no IMod class found: data-only mod)");
 				return;
 			}
+			var errors = new List<string>();
 			foreach (Type t in entries)
 			{
-				((IMod)Activator.CreateInstance(t)).Load(mod.Context);
+				try
+				{
+					((IMod)Activator.CreateInstance(t, true)).Load(mod.Context);
+				}
+				catch (Exception e)
+				{
+					errors.Add(t.Name + ": " + (e is TargetInvocationException { InnerException: { } inner } ? inner : e));
+				}
+			}
+			if (errors.Count > 0)
+			{
+				throw new Exception(string.Join(Environment.NewLine, errors));
 			}
 			mod.State = "loaded";
 		}
@@ -184,7 +228,27 @@ public static class Loader
 			mod.State = "failed";
 			mod.Error = e is ScriptCompiler.CompileException ? e.Message : e.ToString();
 			KitLog.Write("  FAIL " + mod.Error);
+			// Half-loaded: take its patches back off so nothing runs that the player can't switch off.
+			try
+			{
+				mod.Context?.Harmony.UnpatchAll(mod.Context.Harmony.Id);
+			}
+			catch (Exception u)
+			{
+				KitLog.Write("  could not remove its patches: " + u.Message);
+			}
 		}
+	}
+
+	// "0.2", "0.2.0" and "0.2.0-beta" all work; anything unreadable counts as not met.
+	private static bool MeetsKitVersion(string min)
+	{
+		string v = min.Trim().Split('-', '+')[0];
+		if (!v.Contains('.'))
+		{
+			v += ".0";
+		}
+		return Version.TryParse(v, out Version need) && need <= KitVersion;
 	}
 
 	private static Assembly LoadDll(string path)
@@ -237,7 +301,7 @@ public static class Loader
 		}
 		try
 		{
-			File.WriteAllText(KitConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+			KitFiles.WriteAtomic(KitConfigPath, JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 		}
 		catch (Exception e)
 		{
@@ -257,6 +321,7 @@ public static class Loader
 		catch (Exception e)
 		{
 			KitLog.Write("Could not read " + KitConfigPath + ": " + e.Message);
+			KitFiles.KeepBad(KitConfigPath);
 		}
 		return new KitConfig();
 	}

@@ -20,7 +20,7 @@ Either way you get Harmony (to change any game method), events, UI helpers, a se
    {
      "id": "my_first_mod",
      "name": "My First Mod",
-     "version": "1.0.0",
+     "version": "0.2.0",
      "author": "you",
      "description": "Says hello."
    }
@@ -52,7 +52,7 @@ cached in the mod's `.cache` folder and rebuilt only when a `.cs` file, ModKit o
 ```
 Mods\
   MyMod\
-    mod.json          id, name, version, author, description, minModKitVersion (all optional except id)
+    mod.json          id, name, version, author, description, minModKitVersion (all optional; id defaults to the folder name)
     code\*.cs         source files (compiled by ModKit), and/or
     MyMod.dll         a compiled mod (plus any extra DLLs it needs)
     config.json       created by ModKit: your mod's switch values
@@ -69,7 +69,7 @@ Mods\
 ## 3. The API
 
 ### `IMod` and `ModContext`
-ModKit creates every public class implementing `IMod` and calls `Load(ctx)` once, before the game's `Main`
+ModKit creates every class implementing `IMod` (it needs a parameterless constructor) and calls `Load(ctx)` once, before the game's `Main`
 runs (no hero or level exists yet). Subscribe to events and register patches there.
 
 | Member | What it is |
@@ -102,8 +102,8 @@ Values are stored inside the game's own save, with keys prefixed `<id>_`. The ga
 | Event | When |
 |---|---|
 | `DrawOverlay(dmGame g)` | Every frame (title screen and in game), just before the mouse cursor. Draw your windows here. |
-| `Input(dmGame g) â†’ bool` | In game, before the game reads input. Return `true` to swallow this frame's input (e.g. while your window is open). |
-| `MainMenuInput(dmGame g) â†’ bool` | The same, on the title screen. |
+| `Input(dmGame g) → bool` | In game, before the game reads input. Return `true` to swallow this frame's input (e.g. while your window is open). Handlers run in mod load order (alphabetical) and the first one returning `true` stops the rest, so other mods' keys don't fire under your window. |
+| `MainMenuInput(dmGame g) → bool` | The same, on the title screen. |
 | `Update(dmGame g)` | Every update. |
 | `LevelEntered(dmGame g, wgWorldData level)` | A new area became current (dungeon floor, town, Academy, overworld). |
 | `HeroChanged(dmGame g, dmHero hero)` | A save was loaded or a new hero started. |
@@ -138,11 +138,15 @@ g.theRenderer.EndSpriteBatch();
 |---|---|
 | `Ui.ModalWindow(id, wTiles, hTiles, title, onClose)` | The parchment window, title in the game's title font, close button; returns the content area |
 | `Ui.Box(rect, highlighted)` | The dark text box (gold border when highlighted): cards, rows, sections, tabs |
-| `Ui.BoxButton(id, rect, label, onClick, ...)` | The game's steel buttons (lit on hover) |
+| `Ui.BoxButton(id, rect, label, onClick, ...)` | The game's steel buttons (lit on hover); optional `onRightClick` |
+| `TopBar.Add(id, width, (rect, clickable) => ..., priority)` | A button in the shared top-right bar. Call it every frame you want it shown (from `DrawOverlay`); ModKit lays out every mod's buttons with no gaps, and players drag them to reorder (saved in `ModKit\topbar.json`). Draw it with `HangingButton`, passing a null onClick when `clickable` is false. The callback calls `BeginSpriteBatch`/`EndSpriteBatch` itself |
+| `Ui.HangingButton(id, rect, label, onClick, ...)` | The same button turned upside down, hanging from the edge above (top bars, close buttons). A null `onClick` draws it unclickable |
 | `Ui.GameBar(BarStyle.Health / Stamina / Mana / Ire / Xp, rect, fraction, label)` | The hero vitals bars |
 | `Ui.Slider(rect, value, min, max)` | The game's slider with the red gem marker |
 | `Ui.Checkbox(id, x, y, on, onToggle)` | An On/Off box like the Options menu |
-| `Ui.Tabs(...)`, `Ui.Tooltip(text)`, `Ui.Toast(text)` | Tabs, tooltips and pop-up notices in game boxes |
+| `Ui.Tabs(..., maxWidth)`, `Ui.Tooltip(text)`, `Ui.Toast(text)` | Tabs (shrink to fit `maxWidth`), tooltips and pop-up notices in game boxes |
+| `Ui.KeyFocusActive`, `Ui.IsFocused(id)` | Keyboard navigation: while a window registered with `Ui.AddModal` is open, every clickable `Area` / `BoxButton` in it can be reached with Tab / arrows and pressed with Enter / Space. Skip your own arrow-key, Enter and Space shortcuts while `KeyFocusActive` is true. Esc or a mouse click drops the focus. Right-click actions are mouse-only |
+| `Ui.IconTrimmed("sprite_name", rect)` | Like `Icon`, with the sprite's transparent margins cropped (small figures in big cells, e.g. `petbird_center`) |
 | `Ui.Icon("sprite_name", rect)`, `Ui.Stretch(...)`, `Ui.Sprite(sprite, rect)` | Any game sprite (names in `Content\SpriteData\*.txt`), e.g. `ui_favorite_heart`, `npc_academy_headmaster`, `petbird_center`, `ook_ui_bag_top` |
 | `Ui.Text(..., UiFont.Title)` | The game's title font |
 
@@ -178,6 +182,31 @@ static void BattlemasterPostfix() => Dm.Say("The Battlemaster nods at you.");
 (https://harmony.pardeike.net) for prefixes, postfixes, `__instance`, `ref` arguments and transpilers.
 
 ---
+
+### Documentation pages for players
+Put `.md` files in your mod's `docs\` folder and Mod Settings shows a **Docs** button on your mod's card. Pages are
+shown in file-name order (`01-overview.md`, `02-...`), with this Markdown subset:
+`# Page title`, `## Heading`, `- bullet`, blank line = new paragraph, `**bold**` and `` `keys` `` in gold, the game's
+`^3` color codes, and `![caption](picture.png)` for a PNG in the same folder (scaled to fit). `Ui.OpenModDocs(id)`
+opens them from code.
+
+### Screenshots: `DevCapture`
+`DevCapture.Scene("mymod_window", setup, cleanup)` registers a screen to capture. `tools\capture.ps1` (toolkit repo)
+installs ModKit and the sibling mod repos, loads your first save, captures every scene into `<game>\ModKit\shots\`
+and quits without saving (saves are backed up first). Players never see it: it only runs when
+`ModKit\devcapture.txt` exists.
+
+### Surviving game updates
+ModKit is built so a game update breaks as little as possible:
+- Its own hooks are registered one by one. If an update renames a game method, only the events that hook feeds
+  stop, and `modkit.log` says which (`FAIL core hook ...`). An error inside ModKit is logged and never reaches the game.
+- Every event handler runs in its own try/catch, and so does every `ctx.Patch` group: a group that can't register is
+  logged as `FAIL` and the rest of your mod keeps working. If `Load` itself throws, the mod's patches are removed.
+- Settings files are written through a temp file; an unreadable one is kept as `config.json.bad`.
+- What ModKit can't catch: an exception thrown *while your patch runs* goes to the game. Keep patch bodies small and
+  wrap risky code in try/catch. Look game members up with `Patching.Method` inside `ctx.Patch`, not in static fields.
+- For mod authors who ship a DLL: ModKit only adds overloads and never changes existing signatures, so a DLL built
+  against an older ModKit keeps loading. Do the same for any API you expose to other mods.
 
 ## 4. Finding your way in the game's code
 

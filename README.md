@@ -8,8 +8,8 @@ A mod loader and toolkit for [Dungeonmans](https://store.steampowered.com/app/28
   saved data and per-mod settings.
 - Adds a **Mod Settings** menu (title screen, and under the Options window) where players switch mods and their
   features on and off.
-- If a mod breaks (for example after a game update), the failing part is logged and turned off; the game and other
-  mods keep working.
+- If a mod breaks (for example after a game update), the part that can't load is logged and left off, and the game
+  and other mods keep working. Errors while a patch runs are not caught: check `ModKit\modkit.log`.
 
 Nothing in `Dungeonmans.dll` is modified: ModKit runs as a .NET startup hook.
 
@@ -24,8 +24,10 @@ Nothing in `Dungeonmans.dll` is modified: ModKit runs as a .NET startup hook.
 
 Read **[docs/MODDING.md](docs/MODDING.md)**: a 2-minute first mod, the full API, how to find your way in the game's
 code, and how to share your mod. A complete one-file example is in
-[Examples/HelloAcademy](Examples/HelloAcademy/code/HelloAcademy.cs). A full-size DLL mod built on ModKit:
-[dungeonmans-QoL-megapack](https://github.com/chibranche/dungeonmans-QoL-megapack).
+[Examples/HelloAcademy](Examples/HelloAcademy/code/HelloAcademy.cs). Mods built on ModKit:
+[QoL megapack](https://github.com/chibranche/dungeonmans-QoL-megapack),
+[Poultry Coop](https://github.com/chibranche/dungeonmans-poultry-coop),
+[Pay 2 Lose Metaprogression](https://github.com/chibranche/dungeonmans-pay2lose-metaprogression).
 
 ```csharp
 public class MyFirstMod : IMod
@@ -62,3 +64,7 @@ How it loads: ModKit is registered as `STARTUP_HOOKS` in `Dungeonmans.runtimecon
 game's `Main`. Steam updates restore that file, which is why players re-run the installer after one.
 
 Developed against Dungeonmans 1.14.4.9 (Steam build 20296537).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

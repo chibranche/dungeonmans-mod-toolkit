@@ -22,10 +22,10 @@ public sealed class ModInfo
 {
 	public string Id { get; set; }
 	public string Name { get; set; }
-	public string Version { get; set; } = "1.0.0";
+	public string Version { get; set; } = "0.1.0";
 	public string Author { get; set; } = "";
 	public string Description { get; set; } = "";
-	/// <summary>Lowest ModKit version this mod needs, e.g. "1.0.0". Optional.</summary>
+	/// <summary>Lowest ModKit version this mod needs, e.g. "0.2.0". Optional.</summary>
 	public string MinModKitVersion { get; set; }
 }
 
@@ -180,6 +180,7 @@ public sealed class ModSettings
 		catch (Exception e)
 		{
 			ctx.Log.Write("Could not read " + ConfigPath + ": " + e.Message);
+			KitFiles.KeepBad(ConfigPath);
 		}
 		return result;
 	}
@@ -188,7 +189,7 @@ public sealed class ModSettings
 	{
 		try
 		{
-			File.WriteAllText(ConfigPath, JsonSerializer.Serialize(values, new JsonSerializerOptions { WriteIndented = true }));
+			KitFiles.WriteAtomic(ConfigPath, JsonSerializer.Serialize(values, new JsonSerializerOptions { WriteIndented = true }));
 		}
 		catch (Exception e)
 		{

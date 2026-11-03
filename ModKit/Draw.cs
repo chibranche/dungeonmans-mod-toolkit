@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using DungeonMans;
 using HarmonyLib;
@@ -51,6 +52,19 @@ public static partial class Ui
 	/// <summary>Opens the Mod Settings window (e.g. from your own "settings" button).</summary>
 	public static void OpenModSettings() => SettingsPanel.Open();
 
+	/// <summary>Opens Mod Settings on a mod's documentation (its docs\ folder). False if that mod has none.</summary>
+	public static bool OpenModDocs(string modId)
+	{
+		LoadedMod m = Loader.Mods.FirstOrDefault(x => x.Info.Id == modId);
+		if (m == null || !DocsViewer.HasDocs(m))
+		{
+			return false;
+		}
+		SettingsPanel.Open();
+		DocsViewer.Open(m);
+		return true;
+	}
+
 	/// <summary>Closes the Mod Settings window if it's open.</summary>
 	public static void CloseModSettings()
 	{
@@ -77,14 +91,36 @@ public static partial class Ui
 		MouseReleased = !down && MouseDown;
 		MouseDown = down;
 		tooltip = null;
+		tooltipAt = null;
+		// A window that stopped drawing mid-drag (hidden by a menu) drops the drag without saving a position.
+		if (dragging != null && dragFrame < Frame - 1)
+		{
+			dragging = null;
+		}
+		UpdateKeyNav();
 	}
 
 	// ---------- low-level ----------
 
 	private static Texture2D pixel;
-	private static readonly AccessTools.FieldRef<wg2DRenderer, SpriteBatch> BatchRef = AccessTools.FieldRefAccess<wg2DRenderer, SpriteBatch>("spriteBatch");
+	// The renderer's SpriteBatch, found lazily: by its name, else as the only SpriteBatch field (survives a rename).
+	// Never looked up in a static initializer, so a game update can't take down the whole Ui class.
+	private static Func<wg2DRenderer, SpriteBatch> batchRef;
 
-	private static SpriteBatch Batch => BatchRef(Dm.Renderer);
+	private static SpriteBatch Batch
+	{
+		get
+		{
+			if (batchRef == null)
+			{
+				System.Reflection.FieldInfo f = AccessTools.Field(typeof(wg2DRenderer), "spriteBatch")
+					?? AccessTools.GetDeclaredFields(typeof(wg2DRenderer)).FirstOrDefault(x => x.FieldType == typeof(SpriteBatch))
+					?? throw new MissingFieldException("wg2DRenderer", "spriteBatch");
+				batchRef = r => (SpriteBatch)f.GetValue(r);
+			}
+			return batchRef(Dm.Renderer);
+		}
+	}
 
 	private static Texture2D Pixel
 	{
@@ -162,6 +198,77 @@ public static partial class Ui
 
 	/// <summary>Draws a game sprite by name, fitted in a box (e.g. "ui_favorite_heart", "ui_lock", "ui_levelup").</summary>
 	public static void Icon(string spriteName, Rectangle box, Color? tint = null) => Sprite(GameSprite(spriteName), box, tint);
+
+	private static readonly Dictionary<string, Rectangle> trimmed = new Dictionary<string, Rectangle>();
+
+	/// <summary>
+	/// Like <see cref="Icon"/>, but the sprite's transparent margins are cropped first, so a small figure in a big
+	/// sprite cell (e.g. "petbird_center") fills the box. The crop is measured once per sprite.
+	/// </summary>
+	public static void IconTrimmed(string spriteName, Rectangle box, Color? tint = null)
+	{
+		dmSprite sp = GameSprite(spriteName);
+		if (sp.Width <= 0 || sp.Height <= 0)
+		{
+			return;
+		}
+		Texture2D tex = Dm.Renderer.texturesByID[sp.iTextureID].Texture;
+		if (!trimmed.TryGetValue(spriteName, out Rectangle src))
+		{
+			src = new Rectangle(sp.xLoc, sp.yLoc, sp.Width, sp.Height);
+			try
+			{
+				var data = new Color[src.Width * src.Height];
+				tex.GetData(0, src, data, 0, data.Length);
+				int minX = src.Width, minY = src.Height, maxX = -1, maxY = -1;
+				for (int i = 0; i < data.Length; i++)
+				{
+					if (data[i].A > 16)
+					{
+						int x = i % src.Width, y = i / src.Width;
+						minX = Math.Min(minX, x);
+						maxX = Math.Max(maxX, x);
+						minY = Math.Min(minY, y);
+						maxY = Math.Max(maxY, y);
+					}
+				}
+				if (maxX >= minX)
+				{
+					src = new Rectangle(src.X + minX, src.Y + minY, maxX - minX + 1, maxY - minY + 1);
+				}
+			}
+			catch
+			{
+				// Texture not readable: keep the whole cell.
+			}
+			trimmed[spriteName] = src;
+		}
+		float scale = Math.Min(box.Width / (float)src.Width, box.Height / (float)src.Height);
+		int w = (int)(src.Width * scale), h = (int)(src.Height * scale);
+		Batch.Draw(tex, new Rectangle(box.X + (box.Width - w) / 2, box.Y + (box.Height - h) / 2, w, h), src, tint ?? Color.White);
+	}
+
+	// After a draw error: end a SpriteBatch the failed code left open, so the game's own Begin doesn't throw
+	// "Begin cannot be called twice" every frame. Harmless when no batch is open.
+	internal static void RecoverBatch()
+	{
+		try
+		{
+			Dm.Renderer?.EndSpriteBatch();
+		}
+		catch
+		{
+		}
+	}
+
+	/// <summary>Draws a texture (e.g. a PNG your mod loaded with Texture2D.FromStream) stretched into a rectangle.</summary>
+	public static void DrawTexture(Texture2D texture, Rectangle r, Color? tint = null)
+	{
+		if (texture != null && r.Width > 0 && r.Height > 0)
+		{
+			Batch.Draw(texture, r, tint ?? Color.White);
+		}
+	}
 
 	/// <summary>Draws a game sprite stretched to fill a rectangle (or a horizontal part of it: 0..1).</summary>
 	public static void Stretch(string spriteName, Rectangle r, float part = 1f, Color? tint = null)
@@ -297,7 +404,7 @@ public static partial class Ui
 		bool hot = Hovered(f);
 		Box(r, on);
 		TextCentered(on ? "On" : "Off", r, on ? Palette.Accent : hot ? Palette.Text : Palette.TextMuted, UiFont.Medium);
-		if (hot && tooltipText != null)
+		if (Hovered(f) && tooltipText != null)
 		{
 			Tooltip(tooltipText);
 		}
@@ -336,6 +443,38 @@ public static partial class Ui
 		return Dm.Renderer.GetActiveFont().MeasureString(StripCodes(text));
 	}
 
+	/// <summary>
+	/// Splits one line of text into lines no wider than maxWidth pixels, at spaces. A color code (^3...) still active
+	/// at a break carries over to the next line.
+	/// </summary>
+	public static List<string> Wrap(string text, int maxWidth, UiFont font = UiFont.Small)
+	{
+		var lines = new List<string>();
+		if (string.IsNullOrEmpty(text) || Measure(text, font).X <= maxWidth)
+		{
+			lines.Add(text ?? "");
+			return lines;
+		}
+		string line = "", color = "";
+		foreach (string word in text.Split(' '))
+		{
+			string candidate = line.Length == 0 ? color + word : line + " " + word;
+			if (line.Length > 0 && Measure(candidate, font).X > maxWidth)
+			{
+				lines.Add(line);
+				candidate = color + word;
+			}
+			line = candidate;
+			int code = line.LastIndexOf('^');
+			if (code >= 0 && code + 1 < line.Length)
+			{
+				color = line.Substring(code, 2);
+			}
+		}
+		lines.Add(line);
+		return lines;
+	}
+
 	public static int LineHeight(UiFont font) => font == UiFont.Large || font == UiFont.Title ? 34 : font == UiFont.Medium ? 26 : 20;
 
 	public static void TextCentered(string text, Rectangle r, Color? color = null, UiFont font = UiFont.Small)
@@ -366,23 +505,47 @@ public static partial class Ui
 
 	/// <summary>
 	/// A button drawn with the game's steel button graphics (lit when hovered or selected). Width is rounded to
-	/// 32-pixel tiles. Returns true while hovered.
+	/// 32-pixel tiles. Returns true while hovered. onRightClick (optional) runs on a right click.
 	/// </summary>
 	public static bool BoxButton(string id, Rectangle r, string label, Action onClick, bool enabled = true, bool selected = false,
-		UiFont font = UiFont.Small, string tooltipText = null, Color? accent = null, int stackLevel = WindowLevel + 1)
+		UiFont font = UiFont.Small, string tooltipText = null, Color? accent = null, int stackLevel = WindowLevel + 1) =>
+		BoxButton(id, r, label, onClick, onRightClick: null, enabled, selected, font, tooltipText, accent, stackLevel);
+
+	/// <summary>A <see cref="BoxButton(string, Rectangle, string, Action, bool, bool, UiFont, string, Color?, int)"/> with a right-click action.</summary>
+	public static bool BoxButton(string id, Rectangle r, string label, Action onClick, Action onRightClick, bool enabled = true, bool selected = false,
+		UiFont font = UiFont.Small, string tooltipText = null, Color? accent = null, int stackLevel = WindowLevel + 1) =>
+		Button(id, r, label, onClick, onRightClick, enabled, selected, font, tooltipText, accent, stackLevel, false);
+
+	/// <summary>
+	/// A steel button drawn upside down, as if hanging from the edge above it (top bar buttons, window close buttons).
+	/// Same behavior as <see cref="BoxButton(string, Rectangle, string, Action, Action, bool, bool, UiFont, string, Color?, int)"/>.
+	/// A null onClick draws the button without a click action (e.g. while it is being dragged).
+	/// </summary>
+	public static bool HangingButton(string id, Rectangle r, string label, Action onClick, Action onRightClick = null, bool enabled = true,
+		bool selected = false, UiFont font = UiFont.Medium, string tooltipText = null, Color? accent = null, int stackLevel = WindowLevel + 1) =>
+		Button(id, r, label, onClick, onRightClick, enabled, selected, font, tooltipText, accent, stackLevel, true);
+
+	private static bool Button(string id, Rectangle r, string label, Action onClick, Action onRightClick, bool enabled, bool selected,
+		UiFont font, string tooltipText, Color? accent, int stackLevel, bool hanging)
 	{
 		int tw = Math.Max(2, (r.Width + 16) / 32);
 		int th = Math.Max(1, (r.Height + 16) / 32);
 		var box = new Rectangle(r.X, r.Y, tw * 32, th * 32);
-		ui_mouseFrame f = Area(id, box, enabled ? () => { dmAudio.PlayUIFX("ui_click_01"); onClick?.Invoke(); } : null, stackLevel);
-		bool hot = Hovered(f);
-		if (enabled && (hot || selected))
+		ui_mouseFrame f = Area(id, box, enabled && (onClick != null || !hanging) ? () => { dmAudio.PlayUIFX("ui_click_01"); onClick?.Invoke(); } : null,
+			enabled && onRightClick != null ? () => { dmAudio.PlayUIFX("ui_click_01"); onRightClick(); } : null, stackLevel);
+		bool focused = enabled && IsFocused(id);
+		bool hot = Hovered(f) || focused;
+		bool lit = enabled && (hot || selected);
+		if (!hanging || !DrawSteelRotated(box, tw, th, lit))
 		{
-			Dm.Renderer.DrawHighlightButton(box.X, box.Y, tw, th);
-		}
-		else
-		{
-			Dm.Renderer.DrawDarkButton(box.X, box.Y, tw, th);
+			if (lit)
+			{
+				Dm.Renderer.DrawHighlightButton(box.X, box.Y, tw, th);
+			}
+			else
+			{
+				Dm.Renderer.DrawDarkButton(box.X, box.Y, tw, th);
+			}
 		}
 		if (!enabled)
 		{
@@ -396,8 +559,59 @@ public static partial class Ui
 		if (hot && tooltipText != null)
 		{
 			Tooltip(tooltipText);
+			tooltipAt = focused && !Hovered(f) ? box : (Rectangle?)null;
 		}
 		return hot;
+	}
+
+	// The game's steel button (renderer.DrawDarkButton / DrawHighlightButton: ui spritesheet columns 9 / 10) turned
+	// 180 degrees: same tiles in reverse order, each flipped both ways. False if the game's sheet can't be found
+	// (the caller then draws the normal button).
+	private static System.Reflection.FieldInfo uiSheetField;
+	private static bool uiSheetMissing;
+
+	private static bool DrawSteelRotated(Rectangle box, int tw, int th, bool lit)
+	{
+		try
+		{
+			if (uiSheetMissing)
+			{
+				return false;
+			}
+			uiSheetField ??= AccessTools.Field(typeof(wg2DRenderer), "ui_spritesheet");
+			object sheet = uiSheetField?.GetValue(Dm.Renderer);
+			Texture2D tex = sheet == null ? null
+				: Traverse.Create(sheet).Field("Texture").GetValue() as Texture2D ?? Traverse.Create(sheet).Property("Texture").GetValue() as Texture2D;
+			if (tex == null)
+			{
+				uiSheetMissing = true;
+				return false;
+			}
+			int column = lit ? 10 : 9;
+			for (int row = 0; row < th; row++)
+			{
+				for (int col = 0; col < tw; col++)
+				{
+					// Tile (col, row) of the normal button, drawn at the mirrored position.
+					OokNewDialogBlock block = th == 1
+						? (col == 0 ? OokNewDialogBlock.TopLeft : col == tw - 1 ? OokNewDialogBlock.TopRight : OokNewDialogBlock.TopSide)
+						: row == 0 ? (col == 0 ? OokNewDialogBlock.TopLeft : col == tw - 1 ? OokNewDialogBlock.TopRight : OokNewDialogBlock.TopSide)
+						: row == th - 1 ? (col == 0 ? OokNewDialogBlock.BottomLeft : col == tw - 1 ? OokNewDialogBlock.BottomRight : OokNewDialogBlock.Bottom)
+						: (col == 0 ? OokNewDialogBlock.LeftSide : col == tw - 1 ? OokNewDialogBlock.RightSide : OokNewDialogBlock.Center);
+					Rectangle src = Dm.Renderer.GetOokDialogTileTextureSource(block);
+					src.X += 66 * column;
+					var dst = new Rectangle(box.X + (tw - 1 - col) * 32, box.Y + (th - 1 - row) * 32, 32, 32);
+					Batch.Draw(tex, dst, src, Color.White, 0f, Vector2.Zero, SpriteEffects.FlipHorizontally | SpriteEffects.FlipVertically, 0f);
+				}
+			}
+			return true;
+		}
+		catch (Exception e)
+		{
+			uiSheetMissing = true;
+			KitLog.Write("Hanging buttons fall back to normal ones: " + e.Message);
+			return false;
+		}
 	}
 
 	/// <summary>Width a BoxButton needs for a label (a multiple of 32).</summary>
@@ -412,21 +626,41 @@ public static partial class Ui
 
 	/// <summary>
 	/// Row of tabs (game boxes; the current one has a gold border). Returns the row height (32).
-	/// Disabled tabs (enabled[i] == false) are grayed out.
+	/// Disabled tabs (enabled[i] == false) are grayed out. With maxWidth, the row never gets wider than that:
+	/// tabs first switch to the small font, then share the width equally (labels shortened if needed).
+	/// tooltips[i] (optional, null = none) shows when the tab is hovered, e.g. why a tab is disabled.
 	/// </summary>
-	public static int Tabs(string id, int x, int y, string[] labels, int current, Action<int> onPick, bool[] enabled = null, UiFont font = UiFont.Medium)
+	public static int Tabs(string id, int x, int y, string[] labels, int current, Action<int> onPick, bool[] enabled = null, UiFont font = UiFont.Medium, int maxWidth = 0, string[] tooltips = null)
 	{
+		const int gap = 4;
+		int[] Widths(UiFont f, int min) => labels.Select(l => Math.Max(min, ((int)Measure(l, f).X + 32 + 31) / 32 * 32)).ToArray();
+		int[] widths = Widths(font, 96);
+		int Total(int[] ws) => ws.Sum() + gap * (ws.Length - 1);
+		if (maxWidth > 0 && Total(widths) > maxWidth)
+		{
+			font = UiFont.Small;
+			widths = Widths(font, 64);
+			if (Total(widths) > maxWidth)
+			{
+				int each = (maxWidth - gap * (labels.Length - 1)) / Math.Max(1, labels.Length);
+				widths = labels.Select(_ => Math.Max(64, each / 32 * 32)).ToArray();
+			}
+		}
 		for (int i = 0; i < labels.Length; i++)
 		{
 			int idx = i;
-			bool on = enabled == null || enabled[i];
-			int w = Math.Max(96, ((int)Measure(labels[i], font).X + 32 + 31) / 32 * 32);
+			bool on = enabled == null || i >= enabled.Length || enabled[i];
+			int w = widths[i];
 			var r = new Rectangle(x, y, w, 32);
 			ui_mouseFrame f = Area(id + "_tab" + i, r, on ? () => { dmAudio.PlayUIFX("ui_click_01"); onPick(idx); } : (Action)null, WindowLevel + 1);
-			bool hot = Hovered(f);
-			Box(r, i == current);
-			TextCentered(labels[i], r, !on ? Palette.TextMuted : i == current ? Palette.Accent : hot ? Color.White : Palette.TextDim, font);
-			x += w + 4;
+			bool hot = Hovered(f) || IsFocused(id + "_tab" + i);
+			if (Hovered(f) && tooltips != null && i < tooltips.Length && tooltips[i] != null)
+			{
+				Tooltip(tooltips[i]);
+			}
+			Box(r, i == current || hot);
+			TextCentered(Fit(labels[i], w - 12, font), r, !on ? Palette.TextMuted : i == current ? Palette.Accent : hot ? Color.White : Palette.TextDim, font);
+			x += w + gap;
 		}
 		return 32;
 	}
@@ -436,7 +670,14 @@ public static partial class Ui
 	private static string tooltip;
 
 	/// <summary>Shows a tooltip next to the mouse this frame (call while something is hovered). Supports color codes and \n.</summary>
-	public static void Tooltip(string text) => tooltip = text;
+	public static void Tooltip(string text)
+	{
+		tooltip = text;
+		tooltipAt = null;
+	}
+
+	// Set when the tooltip belongs to a keyboard-focused button: drawn under it instead of at the mouse.
+	private static Rectangle? tooltipAt;
 
 	internal static void FlushTooltip()
 	{
@@ -445,14 +686,16 @@ public static partial class Ui
 			return;
 		}
 		wg2DRenderer tr = Dm.Renderer;
-		string[] lines = tooltip.Split('\n');
+		// Long lines wrap so the box always fits on screen.
+		int maxW = Math.Max(200, Math.Min(560, (int)tr.fWindowXSize - 64));
+		List<string> lines = tooltip.Split('\n').SelectMany(l => Wrap(l, maxW)).ToList();
 		int w = 0;
 		foreach (string l in lines)
 		{
 			w = Math.Max(w, (int)Measure(l).X);
 		}
-		int tw = (w + 28 + 31) / 32, th = (lines.Length * LineHeight(UiFont.Small) + 14 + 31) / 32;
-		Point m = Mouse;
+		int tw = (w + 28 + 31) / 32, th = (lines.Count * LineHeight(UiFont.Small) + 14 + 31) / 32;
+		Point m = tooltipAt is Rectangle at ? new Point(at.X - 20, at.Bottom - 12) : Mouse;
 		var r = new Rectangle(m.X + 20, m.Y + 20, tw * 32, th * 32);
 		if (r.Right > tr.fWindowXSize - 4)
 		{
@@ -462,10 +705,12 @@ public static partial class Ui
 		{
 			r.Y = m.Y - r.Height - 8;
 		}
+		r.X = Math.Max(4, Math.Min(r.X, (int)tr.fWindowXSize - r.Width - 4));
+		r.Y = Math.Max(4, Math.Min(r.Y, (int)tr.fWindowYSize - r.Height - 4));
 		tr.BeginSpriteBatch();
 		tr.DrawParchmentTextBox(r.X, r.Y, tw, th, true);
-		int ty = r.Y + (r.Height - lines.Length * LineHeight(UiFont.Small)) / 2;
-		for (int i = 0; i < lines.Length; i++)
+		int ty = r.Y + (r.Height - lines.Count * LineHeight(UiFont.Small)) / 2;
+		for (int i = 0; i < lines.Count; i++)
 		{
 			Text(lines[i], r.X + 14, ty + i * LineHeight(UiFont.Small), Palette.Text);
 		}
@@ -546,7 +791,7 @@ public static partial class Ui
 		{
 			TextRight(subtitle, x + w - 84, y + 24, Palette.TextDim);
 		}
-		BoxButton(id + "_close", new Rectangle(x + w - 76, y + 14, 64, 32), "X", onClose, tooltipText: "Close (Esc)", font: UiFont.Medium, stackLevel: WindowLevel + 2);
+		HangingButton(id + "_close", new Rectangle(x + w - 76, y + 14, 64, 32), "X", onClose, tooltipText: "Close (Esc)", stackLevel: WindowLevel + 2);
 		Separator(x + 24, y + 56, w - 48);
 		return new Rectangle(x + 24, y + 66, w - 48, h - 66 - 20);
 	}
@@ -555,6 +800,7 @@ public static partial class Ui
 
 	private static string dragging;
 	private static Point dragOffset;
+	private static int dragFrame;
 
 	/// <summary>
 	/// Makes a window draggable by a handle area. Pass the window's current top-left; returns the (possibly moved)
@@ -563,9 +809,14 @@ public static partial class Ui
 	public static Point Drag(string id, Rectangle handle, Point topLeft, Point size, Action<Point> onDrop = null)
 	{
 		ui_mouseFrame f = Area(id + "_drag", handle, null);
+		if (dragging == id)
+		{
+			dragFrame = Frame;
+		}
 		if (dragging == null && MousePressed && Hovered(f))
 		{
 			dragging = id;
+			dragFrame = Frame;
 			dragOffset = new Point(Mouse.X - topLeft.X, Mouse.Y - topLeft.Y);
 		}
 		if (dragging == id)

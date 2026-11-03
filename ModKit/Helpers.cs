@@ -172,6 +172,7 @@ public static partial class Ui
 		{
 			clicks[id] = onClick;
 			f.funcOnClick = Route;
+			RegisterNav(id, r, stackLevel);
 		}
 		if (onRightClick != null)
 		{
@@ -262,6 +263,7 @@ public static partial class Ui
 	{
 		wg2DRenderer tr = Dm.Renderer;
 		tr.DimScreen();
+		StartNavLayer();
 		Area(id + "_blocker", new Rectangle(0, 0, (int)tr.fWindowXSize, (int)tr.fWindowYSize), null, stackLevel - 1);
 	}
 
@@ -313,7 +315,7 @@ public static class Dialogs
 	// Prefix on dmDialogBox.ProcessDialogResponse (registered by ModKit).
 	internal static void RemapResponse(dmDialogBox __instance, ref int iResponseNum)
 	{
-		if (iResponseNum >= 0 && remaps.TryGetValue(__instance, out List<int> map) && iResponseNum < map.Count)
+		if (__instance != null && iResponseNum >= 0 && remaps.TryGetValue(__instance, out List<int> map) && iResponseNum < map.Count)
 		{
 			iResponseNum = map[iResponseNum];
 		}

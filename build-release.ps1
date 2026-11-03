@@ -16,7 +16,7 @@ $kit = Join-Path $stage "ModKit"
 New-Item -ItemType Directory -Force $kit | Out-Null
 
 Copy-Item (Join-Path $out "DungeonmansModKit.dll"), (Join-Path $out "DungeonmansModKit.xml"), (Join-Path $out "0Harmony.dll") $kit
-Copy-Item (Join-Path $root "tools\Install-ModKit.ps1"), (Join-Path $root "docs\MODDING.md") $kit
+Copy-Item (Join-Path $root "tools\Install-ModKit.ps1"), (Join-Path $root "docs\MODDING.md"), (Join-Path $root "LICENSE") $kit
 Copy-Item (Join-Path $root "Examples") $kit -Recurse
 Get-ChildItem $kit -Recurse -Directory -Filter ".cache" | Remove-Item -Recurse -Force
 foreach ($f in "ModKit-Install.bat", "ModKit-Uninstall.bat", "ModKit-README.txt") {

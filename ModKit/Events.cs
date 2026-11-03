@@ -52,6 +52,10 @@ public static class Events
 
 	private static void Fail(Delegate d, string evt, Exception e)
 	{
+		if (evt == nameof(DrawOverlay))
+		{
+			Ui.RecoverBatch();
+		}
 		errorCounts.TryGetValue(d, out int n);
 		errorCounts[d] = ++n;
 		if (n <= 3)
@@ -162,21 +166,49 @@ public static class Events
 /// <summary>The few Harmony patches ModKit itself needs to drive <see cref="Events"/> and the Mod Settings menu.</summary>
 internal static class CoreHooks
 {
-	public static void Register(Harmony h)
+	// Each hook is registered on its own: if a game update renames one method, only the features fed by that hook
+	// stop (logged as FAIL), the others keep working. Returns how many failed.
+	public static int Register(Harmony h)
 	{
-		h.Patch(Patching.Method(typeof(wg2DRenderer), nameof(wg2DRenderer.DrawMouse)),
-			prefix: Patching.Hook(typeof(CoreHooks), nameof(DrawMousePrefix)));
-		h.Patch(Patching.Method(typeof(dmGame), "CheckControllerInputForGame"),
-			prefix: Patching.Hook(typeof(CoreHooks), nameof(GameInputPrefix)));
-		h.Patch(Patching.Method(typeof(dmMainMenuInterface), nameof(dmMainMenuInterface.UpdateMainMenu)),
-			prefix: Patching.Hook(typeof(CoreHooks), nameof(MainMenuInputPrefix)));
-		h.Patch(Patching.Method(typeof(dmGame), "Update"),
-			postfix: Patching.Hook(typeof(CoreHooks), nameof(UpdatePostfix)));
-		h.Patch(AccessTools.Method(typeof(dmGame), nameof(dmGame.SpawnDialog), new[] { typeof(dmDialogBox), typeof(float) })
-				?? throw new MissingMethodException("dmGame", "SpawnDialog(dmDialogBox, float)"),
-			prefix: Patching.Hook(typeof(CoreHooks), nameof(SpawnDialogPrefix)));
-		h.Patch(Patching.Method(typeof(dmDialogBox), nameof(dmDialogBox.ProcessDialogResponse)),
-			prefix: Patching.Hook(typeof(Dialogs), nameof(Dialogs.RemapResponse)));
+		int failed = 0;
+		void Hook(string what, Action register)
+		{
+			try
+			{
+				register();
+			}
+			catch (Exception e)
+			{
+				failed++;
+				KitLog.Write("  FAIL core hook " + what + ": " + e.Message);
+			}
+		}
+		Hook("drawing (DrawOverlay, Mod Settings menu)", () => h.Patch(Patching.Method(typeof(wg2DRenderer), nameof(wg2DRenderer.DrawMouse)),
+			prefix: Patching.Hook(typeof(CoreHooks), nameof(DrawMousePrefix))));
+		Hook("in-game input (Input)", () => h.Patch(Patching.Method(typeof(dmGame), "CheckControllerInputForGame"),
+			prefix: Patching.Hook(typeof(CoreHooks), nameof(GameInputPrefix))));
+		Hook("title screen input (MainMenuInput)", () => h.Patch(Patching.Method(typeof(dmMainMenuInterface), nameof(dmMainMenuInterface.UpdateMainMenu)),
+			prefix: Patching.Hook(typeof(CoreHooks), nameof(MainMenuInputPrefix))));
+		Hook("update (Update, LevelEntered, HeroChanged, HeroDied)", () => h.Patch(Patching.Method(typeof(dmGame), "Update"),
+			postfix: Patching.Hook(typeof(CoreHooks), nameof(UpdatePostfix))));
+		Hook("dialogs (DialogShown)", () => h.Patch(Patching.Method(typeof(dmGame), nameof(dmGame.SpawnDialog), new[] { typeof(dmDialogBox), typeof(float) }),
+			prefix: Patching.Hook(typeof(CoreHooks), nameof(SpawnDialogPrefix))));
+		Hook("dialog answers (Dialogs.HideResponse)", () => h.Patch(Patching.Method(typeof(dmDialogBox), nameof(dmDialogBox.ProcessDialogResponse)),
+			prefix: Patching.Hook(typeof(Dialogs), nameof(Dialogs.RemapResponse))));
+		return failed;
+	}
+
+	// ModKit's own errors inside a hook: logged a few times, never passed on to the game.
+	private static readonly Dictionary<string, int> hookErrors = new Dictionary<string, int>();
+
+	private static void HookFailed(string hook, Exception e)
+	{
+		hookErrors.TryGetValue(hook, out int n);
+		hookErrors[hook] = ++n;
+		if (n <= 3)
+		{
+			KitLog.Write("ModKit " + hook + " hook threw" + (n == 3 ? " (further errors hidden)" : "") + ": " + e);
+		}
 	}
 
 	private static void DrawMousePrefix()
@@ -187,42 +219,91 @@ internal static class CoreHooks
 			return;
 		}
 		Ui.Frame++;
-		Ui.BeginFrame();
+		// Each step on its own: a broken one (e.g. after a game update) doesn't stop the others.
+		Step("frame start", Ui.BeginFrame);
 		Events.OnDrawOverlay(g);
-		SettingsPanel.Draw(g);
-		Ui.FlushToasts();
-		Ui.FlushTooltip();
+		Step("top bar", () => TopBar.Draw(g));
+		Step("Mod Settings", () => SettingsPanel.Draw(g));
+		Step("focus frame", Ui.FlushFocus);
+		Step("toasts", Ui.FlushToasts);
+		Step("tooltip", Ui.FlushTooltip);
 	}
 
+	private static void Step(string what, Action a)
+	{
+		try
+		{
+			a();
+		}
+		catch (Exception e)
+		{
+			Ui.RecoverBatch();
+			HookFailed("draw: " + what, e);
+		}
+	}
+
+	// On any ModKit error the game reads its input normally (returns true): never a frozen keyboard.
 	private static bool GameInputPrefix(dmGame __instance)
 	{
-		if (SettingsPanel.IsOpen)
+		try
 		{
-			SettingsPanel.HandleInput(__instance);
-			return false;
+			if (SettingsPanel.IsOpen)
+			{
+				SettingsPanel.HandleInput(__instance);
+				return false;
+			}
+			return !Events.OnInput(__instance);
 		}
-		return !Events.OnInput(__instance);
+		catch (Exception e)
+		{
+			HookFailed("input", e);
+			return true;
+		}
 	}
 
 	private static void MainMenuInputPrefix(dmGame theGame)
 	{
-		if (SettingsPanel.IsOpen)
+		try
 		{
-			SettingsPanel.HandleInput(theGame);
+			if (SettingsPanel.IsOpen)
+			{
+				SettingsPanel.HandleInput(theGame);
+			}
+			else if (Events.OnMainMenuInput(theGame))
+			{
+				theGame.theInput.ExecutedActions.Clear();
+			}
 		}
-		else if (Events.OnMainMenuInput(theGame))
+		catch (Exception e)
 		{
-			theGame.theInput.ExecutedActions.Clear();
+			HookFailed("title screen input", e);
 		}
 	}
 
-	private static void UpdatePostfix(dmGame __instance) => Events.OnUpdate(__instance);
+	private static void UpdatePostfix(dmGame __instance)
+	{
+		try
+		{
+			Events.OnUpdate(__instance);
+		}
+		catch (Exception e)
+		{
+			HookFailed("update", e);
+		}
+	}
 
 	private static void SpawnDialogPrefix(dmGame __instance, dmDialogBox newBox)
 	{
-		if (newBox != null)
+		try
 		{
-			Events.OnDialogShown(__instance, newBox);
+			if (newBox != null)
+			{
+				Events.OnDialogShown(__instance, newBox);
+			}
+		}
+		catch (Exception e)
+		{
+			HookFailed("dialog", e);
 		}
 	}
 }

@@ -6,7 +6,7 @@ A mod loader for Dungeonmans (Steam, Windows). It loads every mod in the game's 
 
 INSTALL
 1. Steam: right-click Dungeonmans > Manage > Browse local files. This opens the game folder.
-2. Extract this zip into that folder (you get ModKit\, Mods\ and these .bat files next to Dungeonmans.exe).
+2. Extract this zip into that folder (you get ModKit\, any mods' folders under Mods\, and these .bat files next to Dungeonmans.exe).
 3. Close the game if it's running, then double-click ModKit-Install.bat.
 4. Start the game. A "Mod Settings" button appears at the bottom left of the title screen.
 
@@ -17,6 +17,11 @@ which is how ModKit gets loaded. If your mods stop showing up, close the game an
 ADDING MODS
 Each mod is a folder inside Mods\ (with a mod.json file). Drop it in and restart the game.
 Mods are switched on/off in Mod Settings; whole-mod switches apply at the next launch.
+
+MOVING OR REMOVING THE GAME
+ModKit is registered with the full path of ModKit\DungeonmansModKit.dll. Before moving the game to another Steam
+library or deleting the ModKit folder, run ModKit-Uninstall.bat (or Steam's "Verify integrity of game files"),
+otherwise the game can't start.
 
 SOMETHING WENT WRONG?
 Open ModKit\modkit.log. Each mod lists every part as "ok" or "FAIL". A failing part just turns itself off;
